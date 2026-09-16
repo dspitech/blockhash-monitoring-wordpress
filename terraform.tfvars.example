@@ -1,0 +1,56 @@
+##############################################################################
+# terraform.tfvars.example — Exemple de fichier de variables à personnaliser
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# IMPORTANT — Gestion des secrets :
+#   - Il n'y a PAS de mot de passe MySQL à renseigner : il est généré
+#     automatiquement par Terraform et stocké dans Azure Key Vault.
+#   - Il n'y a PAS de clé SSH à fournir : Terraform en génère une pour vous
+#     et la stocke dans Key Vault (récupérable aussi via "terraform output").
+#   - Le champ "alert_webhook_url" ci-dessous, s'il est renseigné, sera
+#     stocké dans Key Vault et ne sera jamais écrit en clair ailleurs.
+##############################################################################
+
+# --- Identité du projet ------------------------------------------------------
+project_name = "blockhash"
+environment  = "prod"
+
+# --- Région Azure : Norway East, comme demandé par BlockHash ----------------
+location = "norwayeast"
+
+# --- Réseau -------------------------------------------------------------------
+vnet_address_space = ["10.0.0.0/16"]
+web_subnet_prefix  = ["10.0.1.0/24"]
+db_subnet_prefix   = ["10.0.2.0/24"]
+
+# --- Base de données MySQL Flexible Server ------------------------------------
+# Le login est stocké dans Key Vault (secret "mysql-admin-login") ; il n'est
+# pas secret en lui-même (c'est un nom d'utilisateur), mais centralisé pour
+# cohérence. Le mot de passe, lui, est généré automatiquement.
+mysql_admin_login    = "blockhashadmin"
+mysql_sku_name        = "B_Standard_B1ms"
+mysql_storage_size_gb = 20
+mysql_version         = "8.0.21"
+
+# --- Machine Virtuelle : taille Standard_B2s, comme demandé par BlockHash ----
+vm_size           = "Standard_B2s"
+vm_admin_username = "azureadmin"
+
+# --- Key Vault -----------------------------------------------------------------
+# Laisser à "false" en environnement de test pour faciliter les cycles
+# destroy/apply (évite la période de rétention "soft delete" de 7 jours).
+# Passer à "true" en production réelle.
+keyvault_purge_protection_enabled = false
+
+# --- Alerting (optionnel) -----------------------------------------------------
+# Stocké dans Key Vault, jamais écrit en clair dans les scripts/logs.
+alert_webhook_url = "https://discord.com/api/webhooks/XXXXXXXX/XXXXXXXXXXXXXXXX"
+alert_email       = "ops@blockhash.io"
+
+# --- Tags ----------------------------------------------------------------------
+tags = {
+  project     = "blockhash"
+  environment = "prod"
+  managed_by  = "terraform"
+}
