@@ -1,6 +1,6 @@
 #!/bin/bash
 ##############################################################################
-# user_data.sh - Script de provisioning cloud-init exécuté au premier
+# user_data.sh — Script de provisioning cloud-init exécuté au premier
 # démarrage de la VM Web BlockHash (Ubuntu 24.04 LTS).
 #
 # GESTION DES SECRETS : ce script ne contient AUCUN mot de passe, clé SSH ou
@@ -189,7 +189,7 @@ done
 echo ">>> [3/10] Récupération des identifiants MySQL depuis Azure Key Vault..."
 
 # Récupérés UNE SEULE FOIS ici, puis réutilisés à l'étape 5 (wp-config.php)
-# via ces mêmes variables d'environnement exportées - évite un second aller-
+# via ces mêmes variables d'environnement exportées — évite un second aller-
 # retour vers Key Vault pour la même information.
 source /etc/blockhash/keyvault.env
 
@@ -278,7 +278,7 @@ server {
     # intégralement proxifié vers le backend Node.js, qui applique lui-même
     # l'authentification par session AVANT de servir le moindre fichier.
     # (v2 servait /dashboard en fichiers statiques via "alias", ce qui
-    # contournait totalement l'authentification applicative - corrigé ici.)
+    # contournait totalement l'authentification applicative — corrigé ici.)
     location /dashboard {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -356,8 +356,8 @@ PYEOF
 
 # Le nom de la base n'est PAS un secret (un nom de base seul ne permet
 # aucune connexion sans les identifiants ci-dessus) : il est injecté
-# directement par Terraform. DB_HOST reste "localhost" - valeur par défaut
-# de wp-config-sample.php - puisque MySQL tourne désormais SUR CETTE VM
+# directement par Terraform. DB_HOST reste "localhost" — valeur par défaut
+# de wp-config-sample.php — puisque MySQL tourne désormais SUR CETTE VM
 # (aucun remplacement de host nécessaire, contrairement à la v1 qui
 # pointait vers le FQDN d'un serveur MySQL Flexible Server distant).
 sed -i "s/database_name_here/${mysql_database_name}/" /var/www/html/wp-config.php
@@ -420,7 +420,7 @@ echo ">>> [7/10] Installation du script de monitoring /usr/local/bin/monitor.sh.
 cat > /usr/local/bin/monitor.sh << 'MONITOR_EOF'
 #!/bin/bash
 ##############################################################################
-# monitor.sh - Script de surveillance applicative & système pour BlockHash.
+# monitor.sh — Script de surveillance applicative & système pour BlockHash.
 #
 # Exécuté toutes les 5 minutes par cron (voir /etc/cron.d/blockhash-monitor).
 # Le webhook d'alerte n'est JAMAIS stocké en clair sur disque : il est
@@ -557,7 +557,7 @@ echo ">>> [7/10] Installation du script de test d'alerte /usr/local/bin/test_5xx
 cat > /usr/local/bin/test_5xx.sh << 'TEST_EOF'
 #!/bin/bash
 ##############################################################################
-# test_5xx.sh - Déclenche artificiellement des erreurs HTTP 500 afin de
+# test_5xx.sh — Déclenche artificiellement des erreurs HTTP 500 afin de
 # valider la chaîne d'alerte de monitor.sh (y compris la récupération du
 # webhook depuis Key Vault).
 ##############################################################################
@@ -604,7 +604,7 @@ touch /var/log/blockhash-incidents.log
 chmod 644 /var/log/blockhash-incidents.log
 
 ##############################################################################
-# 9. BACKEND NODE.JS - API, AUTHENTIFICATION, WEBSOCKETS (dashboard/server.js)
+# 9. BACKEND NODE.JS — API, AUTHENTIFICATION, WEBSOCKETS (dashboard/server.js)
 ##############################################################################
 echo ">>> [9/10] Déploiement du backend Node.js (dashboard/server.js)..."
 
@@ -627,7 +627,7 @@ PKG_EOF
 
 cat > /var/www/html/dashboard/server.js << 'SERVER_EOF'
 // ============================================================================
-// server.js - Backend du Dashboard entreprise BlockHash
+// server.js — Backend du Dashboard entreprise BlockHash
 //
 // Fonctionnalités :
 //   - Authentification par session (identifiants lus depuis un fichier local
@@ -791,7 +791,7 @@ function authRequired(req, res, next) {
 }
 
 // ----------------------------------------------------------------------------
-// Routes publiques (login) - enregistrees AVANT le middleware d'auth pour
+// Routes publiques (login) — enregistrees AVANT le middleware d'auth pour
 // rester accessibles sans session valide.
 // ----------------------------------------------------------------------------
 app.get("/dashboard/login", function (req, res) {
@@ -1118,7 +1118,7 @@ setInterval(function () {
 }, 3000);
 
 // ----------------------------------------------------------------------------
-// API REST - toutes protegees par authRequired (deja applique plus haut).
+// API REST — toutes protegees par authRequired (deja applique plus haut).
 // ----------------------------------------------------------------------------
 
 // Historique des metriques pour le graphique multi-plages.
@@ -1328,7 +1328,7 @@ cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BlockHash - Connexion</title>
+<title>BlockHash — Connexion</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <style>
@@ -1407,7 +1407,7 @@ cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
                 return response.json().then(function (data) {
                     var messages = {
                         invalid_credentials: "Identifiants incorrects.",
-                        too_many_attempts: "Trop de tentatives - reessayez dans quelques minutes.",
+                        too_many_attempts: "Trop de tentatives — reessayez dans quelques minutes.",
                         auth_not_configured: "Authentification non configuree cote serveur."
                     };
                     errorEl.textContent = messages[data.error] || "Erreur de connexion.";
@@ -1415,7 +1415,7 @@ cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
                 });
             })
             .catch(function () {
-                errorEl.textContent = "Erreur reseau - reessayez.";
+                errorEl.textContent = "Erreur reseau — reessayez.";
                 errorEl.classList.remove("hidden");
             });
     });
@@ -1430,7 +1430,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BlockHash - Dashboard de Monitoring</title>
+<title>BlockHash — Dashboard de Monitoring</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -1504,7 +1504,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
     <header class="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
         <div>
             <h1 class="text-3xl font-bold tracking-tight">BlockHash <span class="text-indigo-400">Ops</span></h1>
-            <p class="text-muted text-sm mt-1">Dashboard de monitoring - Infrastructure Azure</p>
+            <p class="text-muted text-sm mt-1">Dashboard de monitoring — Infrastructure Azure</p>
         </div>
         <div class="flex items-center gap-3">
             <span id="connection-indicator" class="status-dot bg-slate-500 text-slate-500"></span>
@@ -1674,7 +1674,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
     lucide.createIcons();
 
     // ------------------------------------------------------------------
-    // Theme clair/sombre - persiste la preference dans localStorage
+    // Theme clair/sombre — persiste la preference dans localStorage
     // (page servee par notre propre backend, pas une preview d'artefact).
     // ------------------------------------------------------------------
     var themeBtn = document.getElementById("btn-theme-toggle");

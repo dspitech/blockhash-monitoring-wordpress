@@ -58,6 +58,51 @@ locals {
     mysql_database_name               = var.mysql_database_name
     alert_email                       = var.alert_email
   })
+
+  # --------------------------------------------------------------------
+  # CONTOURNEMENT DE LA LIMITE AZURE "custom_data" (87 380 caractères en
+  # base64, soit ~65 535 caractères en clair) :
+  #
+  # Le dashboard entreprise (backend Node.js + frontend HTML/CSS/JS
+  # abondamment commentés) fait grossir user_data.sh bien au-delà de cette
+  # limite (~83 000 caractères en clair, ~110 000 une fois encodé en
+  # base64 — Azure refuse la création de la VM avec l'erreur
+  # "InvalidParameter: Custom data ... maximum length of 87380 characters").
+  #
+  # Solution : le script complet est compressé en gzip puis encodé en
+  # base64 via la fonction native base64gzip() de Terraform (résultat
+  # ~30 000 caractères, uniquement composés de l'alphabet base64 standard
+  # A-Za-z0-9+/=, donc sans aucun risque de collision avec la syntaxe
+  # d'interpolation Terraform ${...}). C'est ce blob compressé qui est
+  # embarqué dans un très court script "bootstrap", lequel est LUI
+  # effectivement transmis à Azure via custom_data : il se contente de
+  # décompresser le script complet sur la VM puis de l'exécuter.
+  # --------------------------------------------------------------------
+  user_data_gzip_b64 = base64gzip(local.user_data_rendered)
+
+  bootstrap_script = <<-EOT
+    #!/bin/bash
+    # Bootstrap cloud-init minimal : décompresse et exécute le script de
+    # provisioning complet (voir modules/vm/scripts/user_data.sh), stocké
+    # ci-dessous sous forme compressée pour respecter la limite Azure de
+    # 87 380 caractères sur "custom_data".
+    set -euo pipefail
+    exec > >(tee -a /var/log/user-data-bootstrap.log) 2>&1
+    echo ">>> [BlockHash] Bootstrap : décompression du script de provisioning..."
+
+    mkdir -p /opt/blockhash
+
+    cat > /opt/blockhash/provision.sh.gz.b64 << 'BLOB_EOF'
+    ${local.user_data_gzip_b64}
+    BLOB_EOF
+
+    base64 -d /opt/blockhash/provision.sh.gz.b64 | gunzip > /opt/blockhash/provision.sh
+    chmod +x /opt/blockhash/provision.sh
+    rm -f /opt/blockhash/provision.sh.gz.b64
+
+    echo ">>> [BlockHash] Bootstrap terminé, lancement du provisioning complet..."
+    /opt/blockhash/provision.sh
+    EOT
 }
 
 # ----------------------------------------------------------------------------
@@ -112,9 +157,11 @@ resource "azurerm_linux_virtual_machine" "web" {
     version   = "latest"
   }
 
-  # Script de provisioning cloud-init encodé en base64. Ne contient AUCUN
-  # secret en clair (voir local.user_data_rendered ci-dessus).
-  custom_data = base64encode(local.user_data_rendered)
+  # Script de provisioning transmis via un bootstrap compressé (voir
+  # local.bootstrap_script ci-dessus) — contourne la limite Azure de
+  # 87 380 caractères sur "custom_data". Le script complet ne contient
+  # AUCUN secret en clair (voir local.user_data_rendered).
+  custom_data = base64encode(local.bootstrap_script)
 
   depends_on = [azurerm_network_interface_security_group_association.web]
 }

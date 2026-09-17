@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚡ BlockHash - Azure Cloud Infrastructure
+# ⚡ BlockHash — Azure Cloud Infrastructure
 
 ### Infrastructure-as-Code modulaire pour un socle WordPress haute-observabilité sur Microsoft Azure
 
@@ -208,7 +208,7 @@ blockhash-azure-infrastructure/
     └── Test-BlockHashPreflight.ps1  # Pré-validation Azure Cloud Shell (PowerShell)
 ```
 
-> ℹ️ Le module `modules/database/` (Azure MySQL Flexible Server) a été retiré du projet - voir [Architecture](#-architecture) pour le détail du changement.
+> ℹ️ Le module `modules/database/` (Azure MySQL Flexible Server) a été retiré du projet — voir [Architecture](#-architecture) pour le détail du changement.
 
 ---
 
@@ -219,8 +219,8 @@ blockhash-azure-infrastructure/
 | [Terraform](https://developer.hashicorp.com/terraform/downloads) | ≥ 1.6.0 | ✅ |
 | [Azure CLI](https://learn.microsoft.com/cli/azure/) | ≥ 2.60 | ✅ |
 | [Az PowerShell](https://learn.microsoft.com/powershell/azure/) | ≥ 11.0 | ✅ |
-| Abonnement Azure actif | - | - |
-| Droits IAM | `Contributor` + `User Access Administrator` (ou `Owner`) sur le Resource Group / abonnement, requis pour créer les role assignments Key Vault | - |
+| Abonnement Azure actif | — | — |
+| Droits IAM | `Contributor` + `User Access Administrator` (ou `Owner`) sur le Resource Group / abonnement, requis pour créer les role assignments Key Vault | — |
 
 > 💡 Aucune clé SSH ni identifiant de base de données n'est requis en amont : ils sont générés automatiquement (voir [Sécurité](#-sécurité--gestion-des-secrets)).
 
@@ -237,7 +237,7 @@ cp terraform.tfvars.example terraform.tfvars
 # Éditez terraform.tfvars : project_name, environment, location, vm_size, etc.
 ```
 
-### 2. Pré-validation (Azure Cloud Shell - PowerShell)
+### 2. Pré-validation (Azure Cloud Shell — PowerShell)
 
 ```powershell
 ./scripts/Test-BlockHashPreflight.ps1
@@ -297,13 +297,13 @@ ssh -i blockhash_vm_key.pem azureadmin@$(terraform output -raw vm_public_ip_addr
 
 > ⚠️ Il n'existe **volontairement aucune variable** `ssh_public_key` ou `mysql_admin_password` : ces valeurs sont générées automatiquement par Terraform.
 >
-> ℹ️ **v2** : les variables `db_subnet_prefix`, `mysql_sku_name`, `mysql_storage_size_gb` et `mysql_version` ont été retirées - elles n'ont plus d'utilité depuis le passage à une installation MySQL locale sur la VM (voir [Architecture](#-architecture)).
+> ℹ️ **v2** : les variables `db_subnet_prefix`, `mysql_sku_name`, `mysql_storage_size_gb` et `mysql_version` ont été retirées — elles n'ont plus d'utilité depuis le passage à une installation MySQL locale sur la VM (voir [Architecture](#-architecture)).
 
 ---
 
 ## 🔐 Sécurité & gestion des secrets
 
-Le projet applique le principe **« zéro secret en dur »** de bout en bout - y compris avec MySQL installé localement :
+Le projet applique le principe **« zéro secret en dur »** de bout en bout — y compris avec MySQL installé localement :
 
 ```mermaid
 flowchart LR
@@ -328,19 +328,19 @@ flowchart LR
 
 - **RBAC Azure** (`enable_rbac_authorization = true`) plutôt que les "access policies" historiques.
 - Le compte exécutant Terraform reçoit le rôle **Key Vault Secrets Officer** (écriture), la VM reçoit uniquement **Key Vault Secrets User** (lecture seule).
-- `user_data.sh` ne contient **aucune valeur secrète interpolée** - uniquement des noms de secrets et le nom du Key Vault.
+- `user_data.sh` ne contient **aucune valeur secrète interpolée** — uniquement des noms de secrets et le nom du Key Vault.
 - Le mot de passe MySQL est transmis au client `mysql` via **l'entrée standard** (heredoc), jamais en argument de ligne de commande (qui serait visible via `ps aux`), et injecté dans `wp-config.php` via un script **Python** (remplacement littéral, pas `sed`) pour éviter toute corruption liée aux caractères spéciaux générés aléatoirement.
 - MySQL local écoute uniquement sur `127.0.0.1` (`bind-address` par défaut d'Ubuntu) : aucune exposition réseau externe, aucune règle NSG dédiée nécessaire.
 - Un durcissement minimal est appliqué au premier démarrage (suppression des comptes anonymes, interdiction du compte `root` hors localhost, suppression de la base `test`).
 - Les variables d'environnement contenant des identifiants sont explicitement `unset` après usage sur la VM.
-- **Dashboard protégé par authentification** : le reverse-proxy Nginx redirige `/dashboard` et `/socket.io/` entièrement vers le backend Node.js (plus de fichiers statiques exposés directement), qui applique une vérification de session **avant** de servir la moindre page ou le moindre appel API - y compris les connexions WebSocket (middleware `express-session` partagé avec Socket.io). Comparaison du mot de passe en temps constant (`crypto.timingSafeEqual`) et limitation anti brute-force (5 tentatives / 5 min par IP).
+- **Dashboard protégé par authentification** : le reverse-proxy Nginx redirige `/dashboard` et `/socket.io/` entièrement vers le backend Node.js (plus de fichiers statiques exposés directement), qui applique une vérification de session **avant** de servir la moindre page ou le moindre appel API — y compris les connexions WebSocket (middleware `express-session` partagé avec Socket.io). Comparaison du mot de passe en temps constant (`crypto.timingSafeEqual`) et limitation anti brute-force (5 tentatives / 5 min par IP).
 - Le **state Terraform** contient nécessairement ces valeurs (contrainte technique incontournable pour la création des ressources Azure) : utilisez un **backend distant chiffré** (Azure Storage Account avec chiffrement et accès restreint) et ne versionnez jamais le state dans Git.
 
 ---
 
 ## 📊 Observabilité & Monitoring
 
-Le dashboard (`/dashboard`) est une **application interne protégée par authentification**, accessible uniquement via `/dashboard/login` (identifiants générés par Terraform, stockés dans Key Vault - voir [Sécurité](#-sécurité--gestion-des-secrets)).
+Le dashboard (`/dashboard`) est une **application interne protégée par authentification**, accessible uniquement via `/dashboard/login` (identifiants générés par Terraform, stockés dans Key Vault — voir [Sécurité](#-sécurité--gestion-des-secrets)).
 
 ### KPIs (bandeau d'en-tête)
 
@@ -395,9 +395,9 @@ Les alertes sont envoyées simultanément par **webhook** (Discord/Slack), par *
 | Interface réseau | `nic-web-<env>` | `vm` |
 | Machine Virtuelle | `vm-web-<env>` (Ubuntu 24.04 LTS) | `vm` |
 | Identité managée système | (rattachée à la VM) | `vm` |
-| MySQL Server 8.x | *(local, sur la VM - pas de ressource Azure dédiée)* | `vm` (provisionné par `user_data.sh`) |
+| MySQL Server 8.x | *(local, sur la VM — pas de ressource Azure dédiée)* | `vm` (provisionné par `user_data.sh`) |
 
-> ℹ️ **v2** : plus de sous-réseau délégué MySQL, plus de zone DNS privée, plus de serveur MySQL Flexible Server - MySQL est un simple service Linux tournant sur la VM Web (voir [Architecture](#-architecture)).
+> ℹ️ **v2** : plus de sous-réseau délégué MySQL, plus de zone DNS privée, plus de serveur MySQL Flexible Server — MySQL est un simple service Linux tournant sur la VM Web (voir [Architecture](#-architecture)).
 
 ---
 
@@ -450,6 +450,12 @@ terraform destroy
 ---
 
 ## ❓ Questions fréquentes / Dépannage
+
+<details>
+<summary><b>Erreur "Custom data ... maximum length of 87380 characters" au déploiement</b></summary>
+
+Azure limite le champ `custom_data` (cloud-init) à 87 380 caractères une fois encodé en base64. Le script complet `user_data.sh` (dashboard entreprise inclus, abondamment commenté) dépasse cette limite en clair. La solution est déjà en place dans `modules/vm/main.tf` : le script complet est compressé en gzip (`base64gzip()`), embarqué dans un petit script "bootstrap" qui le décompresse et l'exécute au démarrage — c'est ce bootstrap, bien plus court, qui est réellement transmis via `custom_data`. Si vous ajoutez encore beaucoup de contenu à `user_data.sh` à l'avenir et que l'erreur revient malgré la compression (peu probable avant plusieurs centaines de Ko), consultez `/var/log/user-data-bootstrap.log` puis `/var/log/user-data.log` sur la VM pour diagnostiquer, et envisagez de déplacer les plus gros fichiers (ex: `index.html`) vers un stockage externe (Azure Blob Storage, Storage Account) téléchargé au démarrage plutôt qu'embarqué.
+</details>
 
 <details>
 <summary><b>Comment se connecter au dashboard pour la première fois ?</b></summary>
@@ -522,7 +528,7 @@ Les évolutions suivantes sont documentées séparément dans la roadmap opérat
 ## 🏅 Bonnes pratiques appliquées
 
 - ✅ Infrastructure 100 % modulaire et réutilisable (4 modules indépendants)
-- ✅ Zéro secret en dur - génération dynamique + Key Vault + Managed Identity
+- ✅ Zéro secret en dur — génération dynamique + Key Vault + Managed Identity
 - ✅ Nommage cohérent et prévisible de toutes les ressources
 - ✅ Réseau segmenté (sous-réseaux dédiés, NSG à moindre privilège)
 - ✅ Observabilité intégrée dès le provisioning (pas d'outil tiers requis)
@@ -533,7 +539,7 @@ Les évolutions suivantes sont documentées séparément dans la roadmap opérat
 
 ## 📄 Licence & contact
 
-Projet interne **BlockHash** - usage propriétaire.
+Projet interne **BlockHash** — usage propriétaire.
 
 Pour toute question technique, ouvrez une issue sur le dépôt ou contactez l'équipe Infrastructure/DevOps de BlockHash.
 
