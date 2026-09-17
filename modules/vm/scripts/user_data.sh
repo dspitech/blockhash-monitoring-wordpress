@@ -1,6 +1,6 @@
 #!/bin/bash
 ##############################################################################
-# user_data.sh - Script de provisioning cloud-init exécuté au premier
+# user_data.sh — Script de provisioning cloud-init exécuté au premier
 # démarrage de la VM Web BlockHash (Ubuntu 24.04 LTS).
 #
 # GESTION DES SECRETS : ce script ne contient AUCUN mot de passe, clé SSH ou
@@ -10,7 +10,6 @@
 #   - mysql_admin_login_secret_name     : NOM du secret (pas sa valeur)
 #   - mysql_admin_password_secret_name  : NOM du secret (pas sa valeur)
 #   - alert_webhook_url_secret_name     : NOM du secret (pas sa valeur)
-#   - mysql_fqdn                        : hostname du serveur MySQL
 #   - mysql_database_name               : nom de la base ("wordpress")
 #   - alert_email                       : adresse email de destination
 #
@@ -21,15 +20,26 @@
 # le state Terraform sous cette forme, ni par un fichier de configuration
 # en clair sur la VM.
 #
+# ARCHITECTURE MySQL (v2) : Azure Database for MySQL Flexible Server a été
+# abandonné (restriction "ProvisionNotSupportedForRegion" constatée sur
+# l'abonnement Azure for Students, indépendante de la région). MySQL Server
+# 8.x est donc installé et configuré DIRECTEMENT SUR CETTE VM (127.0.0.1),
+# et WordPress s'y connecte en local plutôt qu'à un serveur managé distant.
+# Le login/mot de passe de l'utilisateur MySQL applicatif restent générés
+# dynamiquement par Terraform et stockés dans Key Vault, exactement comme
+# avant : seul change ce à quoi ils servent (créer un utilisateur MySQL
+# local au lieu de s'authentifier à un serveur managé).
+#
 # Étapes réalisées :
-#   1. Mise à jour système & installation des dépendances (dont jq)
+#   1. Mise à jour système & installation des dépendances (dont jq, mysql-server)
 #   2. Mise en place de l'accès Key Vault (config + script kv-get-secret.sh)
-#   3. Configuration Nginx (WordPress + alias /dashboard + proxy WebSocket)
-#   4. Déploiement et configuration de WordPress (identifiants via Key Vault)
-#   5. Script de monitoring enrichi (monitor.sh) + script de test (test_5xx.sh)
-#   6. Planification Cron du monitoring (toutes les 5 minutes)
-#   7. Backend Node.js WebSockets (dashboard/server.js) piloté par pm2
-#   8. Frontend Dashboard (dashboard/index.html) — Dark Mode Glassmorphism
+#   3. Installation et configuration de MySQL Server LOCAL (base + utilisateur)
+#   4. Configuration Nginx (WordPress + alias /dashboard + proxy WebSocket)
+#   5. Déploiement et configuration de WordPress (connexion à MySQL local)
+#   6. Script de monitoring enrichi (monitor.sh) + script de test (test_5xx.sh)
+#   7. Planification Cron du monitoring (toutes les 5 minutes)
+#   8. Backend Node.js WebSockets (dashboard/server.js) piloté par pm2
+#   9. Frontend Dashboard (dashboard/index.html) — Dark Mode Glassmorphism
 ##############################################################################
 
 set -euo pipefail
@@ -42,13 +52,14 @@ echo ">>> [BlockHash] Démarrage du provisioning $(date)"
 ##############################################################################
 export DEBIAN_FRONTEND=noninteractive
 
-echo ">>> [1/8] Mise à jour du système..."
+echo ">>> [1/9] Mise à jour du système..."
 apt-get update -y
 apt-get upgrade -y
 
-echo ">>> [1/8] Installation de Nginx, PHP 8.3, Node.js, NPM, Mailutils, Curl, jq..."
+echo ">>> [1/9] Installation de Nginx, PHP 8.3, MySQL Server, Node.js, NPM, Mailutils, Curl, jq..."
 apt-get install -y \
     nginx \
+    mysql-server \
     php8.3-fpm \
     php8.3-mysql \
     php8.3-curl \
@@ -70,7 +81,7 @@ npm install -g pm2
 ##############################################################################
 # 2. ACCES AZURE KEY VAULT VIA L'IDENTITE MANAGEE DE LA VM
 ##############################################################################
-echo ">>> [2/8] Mise en place de l'accès à Key Vault (identité managée)..."
+echo ">>> [2/9] Mise en place de l'accès à Key Vault (identité managée)..."
 
 mkdir -p /etc/blockhash
 
@@ -141,9 +152,68 @@ KVGET_EOF
 chmod 700 /usr/local/bin/kv-get-secret.sh
 
 ##############################################################################
-# 3. CONFIGURATION NGINX
+# 3. INSTALLATION & CONFIGURATION DE MYSQL SERVER (LOCAL)
 ##############################################################################
-echo ">>> [3/8] Configuration du virtual host Nginx..."
+echo ">>> [3/9] Installation et configuration de MySQL Server local..."
+
+systemctl enable mysql
+systemctl start mysql
+
+# Attente que le service MySQL soit pleinement opérationnel (le socket peut
+# mettre quelques secondes à apparaître juste après l'installation du paquet).
+for i in $(seq 1 30); do
+    if mysqladmin ping --silent 2>/dev/null; then
+        break
+    fi
+    sleep 2
+done
+
+echo ">>> [3/9] Récupération des identifiants MySQL depuis Azure Key Vault..."
+
+# Récupérés UNE SEULE FOIS ici, puis réutilisés à l'étape 5 (wp-config.php)
+# via ces mêmes variables d'environnement exportées — évite un second aller-
+# retour vers Key Vault pour la même information.
+source /etc/blockhash/keyvault.env
+
+export MYSQL_ADMIN_LOGIN
+export MYSQL_ADMIN_PASSWORD
+MYSQL_ADMIN_LOGIN=$(/usr/local/bin/kv-get-secret.sh "$MYSQL_LOGIN_SECRET_NAME" 20 15)
+MYSQL_ADMIN_PASSWORD=$(/usr/local/bin/kv-get-secret.sh "$MYSQL_PASSWORD_SECRET_NAME" 20 15)
+
+echo ">>> [3/9] Création de la base '${mysql_database_name}' et de l'utilisateur applicatif local..."
+
+# Le mot de passe n'est JAMAIS passé en argument de ligne de commande (ce
+# qui serait visible via "ps aux") : il est transmis au client mysql via
+# l'entrée standard (heredoc non quoté, avec expansion bash normale des
+# variables d'environnement ci-dessus). Les identifiants ne sont écrits
+# nulle part sur le disque de la VM. "IF NOT EXISTS" + "ALTER USER" rendent
+# ce bloc rejouable sans erreur (idempotence en cas de ré-exécution).
+mysql -u root <<SQL_EOF
+CREATE DATABASE IF NOT EXISTS \`${mysql_database_name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS '$MYSQL_ADMIN_LOGIN'@'localhost' IDENTIFIED BY '$MYSQL_ADMIN_PASSWORD';
+ALTER USER '$MYSQL_ADMIN_LOGIN'@'localhost' IDENTIFIED BY '$MYSQL_ADMIN_PASSWORD';
+GRANT ALL PRIVILEGES ON \`${mysql_database_name}\`.* TO '$MYSQL_ADMIN_LOGIN'@'localhost';
+FLUSH PRIVILEGES;
+SQL_EOF
+
+# Durcissement minimal, équivalent partiel de "mysql_secure_installation" :
+# suppression des comptes anonymes, interdiction du compte root en dehors
+# de localhost, suppression de la base "test" par défaut. MySQL écoute par
+# défaut uniquement sur 127.0.0.1 (bind-address de base Ubuntu), ce qui
+# suffit ici puisque WordPress se connecte exclusivement en local.
+mysql -u root <<SQL_EOF
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
+FLUSH PRIVILEGES;
+SQL_EOF
+
+echo ">>> [3/9] MySQL Server local opérationnel (base '${mysql_database_name}' prête)."
+
+##############################################################################
+# 4. CONFIGURATION NGINX
+##############################################################################
+echo ">>> [4/9] Configuration du virtual host Nginx..."
 
 cat > /etc/nginx/sites-available/blockhash << 'NGINX_EOF'
 server {
@@ -196,9 +266,9 @@ systemctl restart php8.3-fpm
 systemctl restart nginx
 
 ##############################################################################
-# 4. DEPLOIEMENT & CONFIGURATION DE WORDPRESS (identifiants via Key Vault)
+# 5. DEPLOIEMENT & CONFIGURATION DE WORDPRESS (connexion MySQL locale)
 ##############################################################################
-echo ">>> [4/8] Téléchargement et déploiement de WordPress..."
+echo ">>> [5/9] Téléchargement et déploiement de WordPress..."
 
 cd /tmp
 curl -sSL -O https://wordpress.org/latest.tar.gz
@@ -210,18 +280,11 @@ rm -rf /tmp/wordpress /tmp/latest.tar.gz
 
 cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
 
-echo ">>> [4/8] Récupération des identifiants MySQL depuis Azure Key Vault..."
+echo ">>> [5/9] Injection des identifiants MySQL dans wp-config.php..."
 
-# Les NOMS des secrets proviennent du fichier de configuration non sensible
-# écrit à l'étape 2 (lui-même injecté par Terraform, sans jamais contenir de
-# valeur secrète). Les VALEURS ne sont obtenues qu'à cet instant précis, en
-# mémoire, et ne sont jamais écrites telles quelles sur le disque.
-source /etc/blockhash/keyvault.env
-
-export MYSQL_ADMIN_LOGIN
-export MYSQL_ADMIN_PASSWORD
-MYSQL_ADMIN_LOGIN=$(/usr/local/bin/kv-get-secret.sh "$MYSQL_LOGIN_SECRET_NAME" 20 15)
-MYSQL_ADMIN_PASSWORD=$(/usr/local/bin/kv-get-secret.sh "$MYSQL_PASSWORD_SECRET_NAME" 20 15)
+# MYSQL_ADMIN_LOGIN et MYSQL_ADMIN_PASSWORD ont déjà été récupérés depuis
+# Key Vault à l'étape 3 (et restent exportés dans l'environnement de ce
+# script) : inutile de les redemander à Key Vault une seconde fois.
 
 # Injection via Python3 (remplacement littéral, sans interprétation de
 # caractères spéciaux) plutôt que sed/perl : garantit que le mot de passe
@@ -241,14 +304,19 @@ with open(path, "w") as f:
     f.write(content)
 PYEOF
 
-# Le nom de la base et le FQDN du serveur MySQL ne sont PAS des secrets
-# (un hostname et un nom de base ne permettent aucune connexion sans les
-# identifiants ci-dessus) : ils sont injectés directement par Terraform.
+# Le nom de la base n'est PAS un secret (un nom de base seul ne permet
+# aucune connexion sans les identifiants ci-dessus) : il est injecté
+# directement par Terraform. DB_HOST reste "localhost" — valeur par défaut
+# de wp-config-sample.php — puisque MySQL tourne désormais SUR CETTE VM
+# (aucun remplacement de host nécessaire, contrairement à la v1 qui
+# pointait vers le FQDN d'un serveur MySQL Flexible Server distant).
 sed -i "s/database_name_here/${mysql_database_name}/" /var/www/html/wp-config.php
-sed -i "s/localhost/${mysql_fqdn}/" /var/www/html/wp-config.php
 
-# Azure MySQL Flexible Server exige une connexion chiffrée (SSL) par défaut.
-sed -i "/DB_COLLATE/a define('MYSQL_CLIENT_FLAGS', MYSQLI_CLIENT_SSL);" /var/www/html/wp-config.php
+# NOTE (v2) : la directive MYSQLI_CLIENT_SSL a été retirée. Elle était
+# nécessaire pour Azure MySQL Flexible Server (connexion chiffrée
+# obligatoire) ; une connexion locale à 127.0.0.1 n'a pas de certificat TLS
+# configuré côté serveur MySQL local, donc forcer SSL ici empêcherait
+# WordPress de se connecter.
 
 # Génération de clés de sécurité (salts) aléatoires officielles WordPress.
 curl -sSL https://api.wordpress.org/secret-key/1.1/salt/ > /tmp/wp-salts.txt
@@ -267,9 +335,9 @@ find /var/www/html -type d -exec chmod 755 {} \;
 find /var/www/html -type f -exec chmod 644 {} \;
 
 ##############################################################################
-# 5. SCRIPT DE MONITORING ENRICHI (monitor.sh) + SCRIPT DE TEST (test_5xx.sh)
+# 6. SCRIPT DE MONITORING ENRICHI (monitor.sh) + SCRIPT DE TEST (test_5xx.sh)
 ##############################################################################
-echo ">>> [5/8] Installation du script de monitoring /usr/local/bin/monitor.sh..."
+echo ">>> [6/9] Installation du script de monitoring /usr/local/bin/monitor.sh..."
 
 cat > /usr/local/bin/monitor.sh << 'MONITOR_EOF'
 #!/bin/bash
@@ -378,6 +446,15 @@ if [ "$DISK_USAGE" -gt "$THRESHOLD_DISK" ]; then
     ALERTS="$ALERTS Espace disque élevé : $DISK_USAGE% (seuil $THRESHOLD_DISK%)."
 fi
 
+# ----------------------------------------------------------------------------
+# 6. Disponibilité du service MySQL local (v2 : MySQL tourne sur cette VM).
+#    Une base injoignable en local casse WordPress exactement comme un
+#    Nginx down : c'est donc une sonde critique au même titre que le HTTP.
+# ----------------------------------------------------------------------------
+if ! mysqladmin ping --silent 2>/dev/null; then
+    ALERTS="$ALERTS Service MySQL local injoignable (mysqladmin ping a échoué)."
+fi
+
 echo "$TIMESTAMP | HTTP=$HTTP_STATUS | 5xx=$ERROR_RATE% | CPU=$CPU_USAGE% | RAM=$RAM_USAGE% | DISK=$DISK_USAGE%"
 
 if [ -n "$ALERTS" ]; then
@@ -389,7 +466,7 @@ MONITOR_EOF
 
 chmod +x /usr/local/bin/monitor.sh
 
-echo ">>> [5/8] Installation du script de test d'alerte /usr/local/bin/test_5xx.sh..."
+echo ">>> [6/9] Installation du script de test d'alerte /usr/local/bin/test_5xx.sh..."
 
 cat > /usr/local/bin/test_5xx.sh << 'TEST_EOF'
 #!/bin/bash
@@ -427,9 +504,9 @@ TEST_EOF
 chmod +x /usr/local/bin/test_5xx.sh
 
 ##############################################################################
-# 6. PLANIFICATION CRON DU MONITORING (toutes les 5 minutes)
+# 7. PLANIFICATION CRON DU MONITORING (toutes les 5 minutes)
 ##############################################################################
-echo ">>> [6/8] Planification cron de monitor.sh..."
+echo ">>> [7/9] Planification cron de monitor.sh..."
 
 cat > /etc/cron.d/blockhash-monitor << 'CRON_EOF'
 */5 * * * * root /usr/local/bin/monitor.sh >> /var/log/blockhash-monitor.log 2>&1
@@ -439,9 +516,9 @@ chmod 644 /etc/cron.d/blockhash-monitor
 touch /var/log/blockhash-monitor.log
 
 ##############################################################################
-# 7. BACKEND NODE.JS WEBSOCKETS (dashboard/server.js)
+# 8. BACKEND NODE.JS WEBSOCKETS (dashboard/server.js)
 ##############################################################################
-echo ">>> [7/8] Déploiement du backend Node.js (dashboard/server.js)..."
+echo ">>> [8/9] Déploiement du backend Node.js (dashboard/server.js)..."
 
 mkdir -p /var/www/html/dashboard
 
@@ -612,9 +689,9 @@ bash /tmp/pm2-startup.log > /dev/null 2>&1 || true
 pm2 save
 
 ##############################################################################
-# 8. FRONTEND DASHBOARD (dashboard/index.html) — Dark Glassmorphism Premium
+# 9. FRONTEND DASHBOARD (dashboard/index.html) — Dark Glassmorphism Premium
 ##############################################################################
-echo ">>> [8/8] Déploiement du frontend dashboard/index.html..."
+echo ">>> [9/9] Déploiement du frontend dashboard/index.html..."
 
 cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
 <!DOCTYPE html>

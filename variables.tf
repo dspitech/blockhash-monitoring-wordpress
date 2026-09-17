@@ -38,42 +38,34 @@ variable "vnet_address_space" {
 }
 
 variable "web_subnet_prefix" {
-  description = "Plage CIDR du sous-réseau Web (héberge la VM Nginx/WordPress)."
+  description = "Plage CIDR du sous-réseau Web (héberge la VM Nginx/WordPress/MySQL local)."
   type        = list(string)
   default     = ["10.0.1.0/24"]
 }
 
-variable "db_subnet_prefix" {
-  description = "Plage CIDR du sous-réseau Database (délégué à MySQL Flexible Server)."
-  type        = list(string)
-  default     = ["10.0.2.0/24"]
-}
-
 # ----------------------------------------------------------------------------
-# Base de données MySQL Flexible Server
+# Base de données MySQL — INSTALLATION LOCALE SUR LA VM (v2)
+#
+# Azure Database for MySQL Flexible Server a été abandonné : l'abonnement
+# Azure for Students utilisé pour ce projet renvoie l'erreur
+# "ProvisionNotSupportedForRegion" sur toutes les régions autorisées par
+# Policy (confirmé également par un InternalServerError sur
+# `az mysql flexible-server list-skus`), signe d'un blocage au niveau du
+# service lui-même plutôt que de la région. MySQL Server est donc installé
+# et configuré directement sur la VM Web via cloud-init (voir
+# modules/vm/scripts/user_data.sh). Le login/mot de passe restent générés
+# dynamiquement et stockés dans Key Vault (aucun changement sur ce point).
 # ----------------------------------------------------------------------------
 variable "mysql_admin_login" {
-  description = "Login administrateur du serveur MySQL Flexible Server."
+  description = "Login de l'utilisateur MySQL applicatif créé localement sur la VM."
   type        = string
   default     = "blockhashadmin"
 }
 
-variable "mysql_sku_name" {
-  description = "SKU du serveur MySQL Flexible Server (niveau de performance/coût)."
+variable "mysql_database_name" {
+  description = "Nom de la base de données MySQL locale utilisée par WordPress."
   type        = string
-  default     = "B_Standard_B1ms"
-}
-
-variable "mysql_storage_size_gb" {
-  description = "Taille du stockage alloué au serveur MySQL, en Go."
-  type        = number
-  default     = 20
-}
-
-variable "mysql_version" {
-  description = "Version majeure de MySQL Flexible Server."
-  type        = string
-  default     = "8.0.21"
+  default     = "wordpress"
 }
 
 # ----------------------------------------------------------------------------

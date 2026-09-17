@@ -39,10 +39,13 @@ resource "azurerm_network_interface_security_group_association" "web" {
 
 # ----------------------------------------------------------------------------
 # Rendu du template user_data.sh : injecte UNIQUEMENT des valeurs NON
-# sensibles (nom du Key Vault, noms des secrets à récupérer, FQDN MySQL,
-# nom de la base, adresse email d'alerte). Aucune valeur secrète n'est
+# sensibles (nom du Key Vault, noms des secrets à récupérer, nom de la base
+# MySQL locale, adresse email d'alerte). Aucune valeur secrète n'est
 # interpolée ici — user_data.sh les récupère lui-même à l'exécution via
 # l'identité managée de la VM et l'API REST de Key Vault.
+#
+# NOTE (v2) : il n'y a plus de "mysql_fqdn" à transmettre — MySQL est
+# installé et écoute localement sur la VM (127.0.0.1:3306).
 # ----------------------------------------------------------------------------
 locals {
   user_data_rendered = templatefile("${path.module}/scripts/user_data.sh", {
@@ -50,7 +53,6 @@ locals {
     mysql_admin_login_secret_name     = var.mysql_admin_login_secret_name
     mysql_admin_password_secret_name  = var.mysql_admin_password_secret_name
     alert_webhook_url_secret_name     = var.alert_webhook_url_secret_name
-    mysql_fqdn                        = var.mysql_fqdn
     mysql_database_name               = var.mysql_database_name
     alert_email                       = var.alert_email
   })

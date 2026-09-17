@@ -1,16 +1,24 @@
 ##############################################################################
 # main.tf — Point d'entrée principal de l'infrastructure BlockHash sur Azure
 #
-# Ce fichier orchestre 4 modules Terraform (network, keyvault, database, vm).
+# Ce fichier orchestre 3 modules Terraform (network, keyvault, vm).
+#
+# NOTE ARCHITECTURE (v2) : MySQL tourne désormais localement sur la VM Web
+# (voir modules/vm/scripts/user_data.sh) et non plus sur Azure Database for
+# MySQL Flexible Server. Ce choix fait suite à une restriction de service
+# constatée sur les abonnements Azure for Students (erreur
+# ProvisionNotSupportedForRegion, indépendante de la Policy de région). Le
+# module "database" a été retiré du projet ; voir README.md, section
+# "Architecture" pour le détail du compromis accepté.
 #
 # GESTION DES SECRETS : aucun mot de passe, clé SSH ou identifiant de base
 # de données n'est écrit en dur dans ce projet. Toutes les valeurs
 # sensibles sont :
 #   1. Générées dynamiquement par Terraform (random_password, tls_private_key)
-#      dans le module "keyvault"  jamais recopiées littéralement dans le code.
+#      dans le module "keyvault" — jamais recopiées littéralement dans le code.
 #   2. Stockées dans Azure Key Vault (module "keyvault"), protégé par RBAC.
 #   3. Récupérées par la VM à l'exécution via son identité managée système
-#      (Managed Identity) - le script cloud-init ne reçoit QUE le nom du
+#      (Managed Identity) — le script cloud-init ne reçoit QUE le nom du
 #      Key Vault et les NOMS des secrets, jamais leur valeur.
 ##############################################################################
 
@@ -63,7 +71,6 @@ module "network" {
   location           = var.location
   vnet_address_space = var.vnet_address_space
   web_subnet_prefix  = var.web_subnet_prefix
-  db_subnet_prefix   = var.db_subnet_prefix
   tags               = var.tags
 }
 
@@ -89,34 +96,18 @@ module "keyvault" {
 }
 
 # ----------------------------------------------------------------------------
-# MODULE "database"
-# Consomme le mot de passe MySQL directement depuis les outputs du module
-# keyvault (jamais depuis une variable écrite en dur).
-# ----------------------------------------------------------------------------
-module "database" {
-  source = "./modules/database"
-
-  project_name          = var.project_name
-  environment           = var.environment
-  location              = var.location
-  resource_group_name   = module.network.resource_group_name
-  db_subnet_id          = module.network.db_subnet_id
-  vnet_id               = module.network.vnet_id
-  mysql_admin_login     = var.mysql_admin_login
-  mysql_admin_password  = module.keyvault.mysql_admin_password
-  mysql_sku_name        = var.mysql_sku_name
-  mysql_storage_size_gb = var.mysql_storage_size_gb
-  mysql_version         = var.mysql_version
-  tags                  = var.tags
-
-  depends_on = [module.network]
-}
-
-# ----------------------------------------------------------------------------
 # MODULE "vm"
 # Ne reçoit AUCUN secret en clair : uniquement la clé PUBLIQUE SSH générée
 # par le module keyvault, le nom/URI du Key Vault, et les NOMS des secrets
 # à aller chercher au démarrage via l'identité managée de la VM.
+#
+# NOTE ARCHITECTURE (v2) : MySQL tourne désormais LOCALEMENT sur cette VM
+# (voir user_data.sh) — il n'y a donc plus de module "database" ni de
+# serveur MySQL Flexible Server. Le nom de la base ("wordpress" par défaut)
+# est une simple variable non sensible ; le login/mot de passe MySQL restent
+# générés et stockés dans Key Vault exactement comme avant, mais servent
+# désormais à créer l'utilisateur MySQL LOCAL plutôt qu'à s'authentifier
+# auprès d'un serveur managé distant.
 # ----------------------------------------------------------------------------
 module "vm" {
   source = "./modules/vm"
@@ -146,16 +137,14 @@ module "vm" {
   mysql_admin_password_secret_name = module.keyvault.mysql_admin_password_secret_name
   alert_webhook_url_secret_name    = module.keyvault.alert_webhook_url_secret_name
 
-  # Ces valeurs ne sont PAS des secrets : un FQDN et un nom de base de
-  # données ne permettent aucune connexion sans les identifiants associés.
-  mysql_fqdn          = module.database.mysql_server_fqdn
-  mysql_database_name = module.database.mysql_database_name
+  # Nom de la base MySQL locale — non sensible.
+  mysql_database_name = var.mysql_database_name
 
   alert_email = var.alert_email
 
   tags = var.tags
 
-  depends_on = [module.database, module.keyvault]
+  depends_on = [module.keyvault]
 }
 
 # ----------------------------------------------------------------------------

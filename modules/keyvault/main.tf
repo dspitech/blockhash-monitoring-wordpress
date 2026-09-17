@@ -94,7 +94,7 @@ resource "tls_private_key" "vm_ssh" {
 }
 
 # ----------------------------------------------------------------------------
-# Azure Key Vault - coffre-fort central des secrets BlockHash.
+# Azure Key Vault — coffre-fort central des secrets BlockHash.
 # ----------------------------------------------------------------------------
 resource "azurerm_key_vault" "main" {
   name                = local.key_vault_name

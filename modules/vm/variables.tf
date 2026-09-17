@@ -89,15 +89,12 @@ variable "alert_webhook_url_secret_name" {
 }
 
 # ----------------------------------------------------------------------------
-# Valeurs non sensibles (hostnames, noms) transmises directement.
+# Valeur non sensible (nom de base) transmise directement.
+# NOTE (v2) : plus de "mysql_fqdn" — MySQL tourne localement sur la VM
+# (127.0.0.1:3306), voir user_data.sh.
 # ----------------------------------------------------------------------------
-variable "mysql_fqdn" {
-  description = "FQDN privé du serveur MySQL Flexible Server (non sensible : un hostname seul ne permet aucune connexion)."
-  type        = string
-}
-
 variable "mysql_database_name" {
-  description = "Nom de la base de données WordPress."
+  description = "Nom de la base de données MySQL locale utilisée par WordPress."
   type        = string
 }
 

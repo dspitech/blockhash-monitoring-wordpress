@@ -4,10 +4,21 @@
 # Ce module provisionne toute la fondation réseau de BlockHash :
 #   - Resource Group
 #   - Virtual Network (10.0.0.0/16)
-#   - Sous-réseau Web (10.0.1.0/24)
-#   - Sous-réseau Database délégué à MySQL Flexible Server (10.0.2.0/24)
+#   - Sous-réseau Web (10.0.1.0/24) — héberge la VM (Nginx/PHP/WordPress/
+#     MySQL local/Dashboard Node.js)
 #   - Network Security Group (HTTP 80, SSH 22, WebSocket Dashboard 3000)
 #   - Adresse IP publique statique pour la VM Web
+#
+# NOTE ARCHITECTURE (v2) : le sous-réseau "snet-db" délégué à
+# "Microsoft.DBforMySQL/flexibleServers" a été RETIRÉ. MySQL tourne
+# désormais localement sur la VM Web (voir modules/vm/scripts/user_data.sh)
+# suite à une restriction de l'abonnement Azure for Students sur le service
+# MySQL Flexible Server (erreur ProvisionNotSupportedForRegion). Un
+# sous-réseau délégué à un service Azure qu'on n'utilise plus n'a aucune
+# utilité et ajoute de la complexité pour rien : il est donc supprimé plutôt
+# que conservé vide. Pour revenir un jour à MySQL Flexible Server (migration
+# vers un abonnement standard), il suffira de réintroduire ce sous-réseau et
+# le module "database" (conservé dans l'historique Git).
 ##############################################################################
 
 # ----------------------------------------------------------------------------
@@ -33,38 +44,14 @@ resource "azurerm_virtual_network" "main" {
 }
 
 # ----------------------------------------------------------------------------
-# Sous-réseau Web : héberge la VM Nginx/PHP/WordPress/Dashboard Node.js.
-# Aucune délégation particulière : c'est un sous-réseau standard.
+# Sous-réseau Web : héberge la VM Nginx/PHP/WordPress/MySQL local/Dashboard
+# Node.js. Aucune délégation particulière : c'est un sous-réseau standard.
 # ----------------------------------------------------------------------------
 resource "azurerm_subnet" "web" {
   name                 = "snet-web"
   resource_group_name = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = var.web_subnet_prefix
-}
-
-# ----------------------------------------------------------------------------
-# Sous-réseau Database : DOIT être délégué au service
-# "Microsoft.DBforMySQL/flexibleServers" pour permettre l'injection VNet
-# du serveur MySQL Flexible Server (intégration réseau privée native Azure).
-# ----------------------------------------------------------------------------
-resource "azurerm_subnet" "db" {
-  name                 = "snet-db"
-  resource_group_name = azurerm_resource_group.main.name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = var.db_subnet_prefix
-
-  # Bloc de délégation obligatoire pour MySQL Flexible Server injecté VNet.
-  delegation {
-    name = "mysql-flexible-server-delegation"
-
-    service_delegation {
-      name = "Microsoft.DBforMySQL/flexibleServers"
-      actions = [
-        "Microsoft.Network/virtualNetworks/subnets/join/action",
-      ]
-    }
-  }
 }
 
 # ----------------------------------------------------------------------------

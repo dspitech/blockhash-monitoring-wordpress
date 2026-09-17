@@ -27,11 +27,6 @@ variable "web_subnet_prefix" {
   type        = list(string)
 }
 
-variable "db_subnet_prefix" {
-  description = "Plage CIDR du sous-réseau Database (délégué MySQL)."
-  type        = list(string)
-}
-
 variable "tags" {
   description = "Tags Azure appliqués aux ressources du module."
   type        = map(string)

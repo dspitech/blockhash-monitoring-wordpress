@@ -10,6 +10,14 @@
 #     et la stocke dans Key Vault (récupérable aussi via "terraform output").
 #   - Le champ "alert_webhook_url" ci-dessous, s'il est renseigné, sera
 #     stocké dans Key Vault et ne sera jamais écrit en clair ailleurs.
+#
+# IMPORTANT — Architecture MySQL (v2) :
+#   - Azure Database for MySQL Flexible Server a été ABANDONNÉ (restriction
+#     "ProvisionNotSupportedForRegion" constatée sur les abonnements Azure
+#     for Students). MySQL Server 8.x tourne désormais LOCALEMENT sur la VM
+#     Web. Il n'y a donc plus de variables mysql_sku_name,
+#     mysql_storage_size_gb ni mysql_version : elles n'ont plus de sens pour
+#     une installation locale.
 ##############################################################################
 
 # --- Identité du projet ------------------------------------------------------
@@ -22,16 +30,13 @@ location = "norwayeast"
 # --- Réseau -------------------------------------------------------------------
 vnet_address_space = ["10.0.0.0/16"]
 web_subnet_prefix  = ["10.0.1.0/24"]
-db_subnet_prefix   = ["10.0.2.0/24"]
 
-# --- Base de données MySQL Flexible Server ------------------------------------
+# --- Base de données MySQL (installation locale sur la VM) -------------------
 # Le login est stocké dans Key Vault (secret "mysql-admin-login") ; il n'est
 # pas secret en lui-même (c'est un nom d'utilisateur), mais centralisé pour
 # cohérence. Le mot de passe, lui, est généré automatiquement.
 mysql_admin_login    = "blockhashadmin"
-mysql_sku_name        = "B_Standard_B1ms"
-mysql_storage_size_gb = 20
-mysql_version         = "8.0.21"
+mysql_database_name  = "wordpress"
 
 # --- Machine Virtuelle : taille Standard_B2s, comme demandé par BlockHash ----
 vm_size           = "Standard_B2s"

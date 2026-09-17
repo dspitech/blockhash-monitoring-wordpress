@@ -1,5 +1,5 @@
 ##############################################################################
-# outputs.tf - Sorties exposées au niveau racine après "terraform apply"
+# outputs.tf — Sorties exposées au niveau racine après "terraform apply"
 ##############################################################################
 
 output "vm_public_ip_address" {
@@ -28,7 +28,7 @@ output "resource_group_name" {
 }
 
 # ----------------------------------------------------------------------------
-# Key Vault - aucune valeur secrète n'est exposée en clair ici (hormis la
+# Key Vault — aucune valeur secrète n'est exposée en clair ici (hormis la
 # clé privée SSH ci-dessous, indispensable pour la première connexion et
 # volontairement marquée "sensitive"). Le mot de passe MySQL et le webhook
 # d'alerte doivent être récupérés directement depuis Key Vault :
@@ -47,7 +47,7 @@ output "key_vault_uri" {
 }
 
 # ----------------------------------------------------------------------------
-# Clé privée SSH générée automatiquement par Terraform - sensible. Pour la
+# Clé privée SSH générée automatiquement par Terraform — sensible. Pour la
 # récupérer et vous connecter à la VM :
 #
 #   terraform output -raw vm_ssh_private_key > blockhash_vm_key.pem

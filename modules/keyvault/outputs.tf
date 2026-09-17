@@ -18,7 +18,7 @@ output "key_vault_uri" {
 }
 
 # ----------------------------------------------------------------------------
-# Clé publique SSH générée - NON sensible, transmise telle quelle à
+# Clé publique SSH générée — NON sensible, transmise telle quelle à
 # azurerm_linux_virtual_machine.admin_ssh_key dans le module vm.
 # ----------------------------------------------------------------------------
 output "ssh_public_key" {
@@ -27,7 +27,7 @@ output "ssh_public_key" {
 }
 
 # ----------------------------------------------------------------------------
-# Clé privée SSH générée - sensible. Exposée en sortie de module pour être
+# Clé privée SSH générée — sensible. Exposée en sortie de module pour être
 # relayée par un output racine (pratique pour une récupération immédiate
 # sans avoir à interroger Key Vault), en plus d'être stockée dans Key Vault
 # pour une récupération ultérieure.
@@ -45,7 +45,7 @@ output "mysql_admin_password" {
 }
 
 # ----------------------------------------------------------------------------
-# Noms des secrets Key Vault - non sensibles (ce sont des NOMS, pas des
+# Noms des secrets Key Vault — non sensibles (ce sont des NOMS, pas des
 # valeurs), transmis au module vm pour que user_data.sh sache QUOI
 # demander à Key Vault au démarrage, sans jamais recevoir les valeurs
 # elles-mêmes via Terraform/cloud-init.

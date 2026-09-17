@@ -22,11 +22,6 @@ output "web_subnet_id" {
   value       = azurerm_subnet.web.id
 }
 
-output "db_subnet_id" {
-  description = "ID du sous-réseau Database délégué MySQL (snet-db)."
-  value       = azurerm_subnet.db.id
-}
-
 output "nsg_id" {
   description = "ID du Network Security Group nsg-web."
   value       = azurerm_network_security_group.web.id
