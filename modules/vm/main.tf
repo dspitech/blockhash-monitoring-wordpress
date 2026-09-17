@@ -53,6 +53,8 @@ locals {
     mysql_admin_login_secret_name     = var.mysql_admin_login_secret_name
     mysql_admin_password_secret_name  = var.mysql_admin_password_secret_name
     alert_webhook_url_secret_name     = var.alert_webhook_url_secret_name
+    dashboard_admin_password_secret_name = var.dashboard_admin_password_secret_name
+    dashboard_admin_username          = var.dashboard_admin_username
     mysql_database_name               = var.mysql_database_name
     alert_email                       = var.alert_email
   })

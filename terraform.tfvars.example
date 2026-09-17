@@ -42,6 +42,11 @@ mysql_database_name  = "wordpress"
 vm_size           = "Standard_B2s"
 vm_admin_username = "azureadmin"
 
+# --- Dashboard de monitoring : authentification -------------------------------
+# Le mot de passe est généré automatiquement par Terraform et stocké dans
+# Key Vault — aucune saisie manuelle requise.
+dashboard_admin_username = "admin"
+
 # --- Key Vault -----------------------------------------------------------------
 # Laisser à "false" en environnement de test pour faciliter les cycles
 # destroy/apply (évite la période de rétention "soft delete" de 7 jours).

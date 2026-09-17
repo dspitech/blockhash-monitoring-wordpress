@@ -88,6 +88,17 @@ variable "alert_webhook_url_secret_name" {
   default     = ""
 }
 
+variable "dashboard_admin_password_secret_name" {
+  description = "Nom du secret Key Vault contenant le mot de passe administrateur du dashboard."
+  type        = string
+}
+
+variable "dashboard_admin_username" {
+  description = "Nom d'utilisateur pour la connexion au dashboard de monitoring (non sensible)."
+  type        = string
+  default     = "admin"
+}
+
 # ----------------------------------------------------------------------------
 # Valeur non sensible (nom de base) transmise directement.
 # NOTE (v2) : plus de "mysql_fqdn" — MySQL tourne localement sur la VM

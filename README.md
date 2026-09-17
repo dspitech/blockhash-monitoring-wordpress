@@ -1,6 +1,6 @@
 <div align="center">
 
-#  BlockHash - Azure Cloud Infrastructure
+# ⚡ BlockHash - Azure Cloud Infrastructure
 
 ### Infrastructure-as-Code modulaire pour un socle WordPress haute-observabilité sur Microsoft Azure
 
@@ -17,7 +17,7 @@
 
 ---
 
-##  Sommaire
+## 📋 Sommaire
 
 - [Vue d'ensemble](#-vue-densemble)
 - [Architecture](#-architecture)
@@ -39,46 +39,47 @@
 
 ---
 
-##  Vue d'ensemble
+## 🎯 Vue d'ensemble
 
-**BlockHash** est un projet d'infrastructure cloud **100 % as-code**, conçu pour déployer et exploiter un socle applicatif **WordPress** sur **Microsoft Azure**, accompagné d'un **dashboard de monitoring temps réel** développé sur-mesure.
+**BlockHash** est un projet d'infrastructure cloud **100 % as-code**, conçu pour déployer et exploiter un socle applicatif **WordPress** sur **Microsoft Azure**, accompagné d'un **dashboard de monitoring temps réel de niveau entreprise** développé sur-mesure.
 
-Le projet répond à quatre exigences fondamentales :
+Le projet répond à cinq exigences fondamentales :
 
 | Exigence | Réponse apportée |
 |---|---|
 | **Reproductibilité** | Infrastructure entièrement décrite en Terraform, modulaire, versionnable et ré-exécutable à l'identique sur n'importe quel abonnement Azure. |
 | **Sécurité par conception** | Aucun secret en dur dans le code : génération dynamique + Azure Key Vault + identité managée (voir [Sécurité](#-sécurité--gestion-des-secrets)). |
-| **Observabilité native** | Dashboard temps réel (WebSocket) + monitoring système/applicatif avec alerting automatique (Discord/Slack/Email). |
+| **Observabilité entreprise** | Dashboard authentifié, historique persistant, KPIs (uptime/latence), analytics de logs, santé des services, journal d'incidents (voir [Observabilité](#-observabilité--monitoring)). |
+| **Alerting automatique** | Sondes système/applicatives avec notification Discord/Slack/Email et journalisation persistante des incidents. |
 | **Gouvernance du déploiement** | Script de pré-validation PowerShell exécutable dans Azure Cloud Shell, contrôlant quotas, conventions et cohérence Terraform **avant** tout déploiement. |
 
 ### Cas d'usage cible
 
-Un site WordPress de production, hébergé sur une VM Linux unique, avec base de données managée, supervisé en continu par un dashboard interne exposant en direct la santé applicative (disponibilité HTTP, taux d'erreurs 5xx, CPU/RAM/disque) et les logs Nginx.
+Un site WordPress de production, hébergé sur une VM Linux unique avec MySQL local, supervisé en continu par un dashboard interne **protégé par authentification**, exposant en direct la santé applicative (disponibilité HTTP, latence, taux d'erreurs 5xx, CPU/RAM/disque, santé des services) avec historique, KPIs et journal d'incidents.
 
 ---
 
-##  Architecture
+## 🏗️ Architecture
 
-> ℹ **Choix d'architecture (v2)** : Azure Database for MySQL Flexible Server a été remplacé par une **installation locale de MySQL Server sur la VM Web**, suite à une restriction de service constatée sur les abonnements **Azure for Students** (voir [FAQ](#-questions-fréquentes--dépannage)). Le détail du compromis est expliqué en fin de section.
+> ℹ️ **Choix d'architecture (v2)** : Azure Database for MySQL Flexible Server a été remplacé par une **installation locale de MySQL Server sur la VM Web**, suite à une restriction de service constatée sur les abonnements **Azure for Students** (voir [FAQ](#-questions-fréquentes--dépannage)). Le détail du compromis est expliqué en fin de section.
 
 ```mermaid
 graph TB
     subgraph Internet
-        User([ Visiteur / Administrateur])
+        User([👤 Visiteur / Administrateur])
     end
 
     subgraph "Azure Resource Group : rg-blockhash-prod (Norway East)"
         subgraph "VNet 10.0.0.0/16"
             subgraph "snet-web 10.0.1.0/24"
-                VM[" VM Linux Ubuntu 24.04<br/>Standard_B2s<br/>Nginx · PHP 8.3-FPM · WordPress<br/>MySQL Server 8.x (local)<br/>Node.js · Socket.io · pm2"]
+                VM["🖥️ VM Linux Ubuntu 24.04<br/>Standard_B2s<br/>Nginx · PHP 8.3-FPM · WordPress<br/>MySQL Server 8.x (local)<br/>Node.js · Socket.io · pm2"]
             end
         end
 
-        NSG[" NSG nsg-web<br/>22 · 80 · 3000"]
-        PIP[" IP Publique Statique"]
-        KV[" Azure Key Vault<br/>RBAC · Secrets"]
-        MI([" Identité Managée<br/>Système (VM)"])
+        NSG["🛡️ NSG nsg-web<br/>22 · 80 · 3000"]
+        PIP["🌐 IP Publique Statique"]
+        KV["🔑 Azure Key Vault<br/>RBAC · Secrets"]
+        MI(["🪪 Identité Managée<br/>Système (VM)"])
     end
 
     User -->|HTTPS/HTTP 80| PIP
@@ -98,7 +99,7 @@ graph TB
 
 ```mermaid
 sequenceDiagram
-    participant Cloud as  Azure Cloud Shell (PowerShell)
+    participant Cloud as ☁️ Azure Cloud Shell (PowerShell)
     participant TF as Terraform
     participant KV as Azure Key Vault
     participant VM as VM Web (Managed Identity)
@@ -132,13 +133,13 @@ Sur un abonnement **Azure for Students**, la création d'un serveur **Azure Data
 | Montée en charge | Scaling indépendant de la VM | Couplée aux ressources de la VM (CPU/RAM partagés) |
 | Isolation réseau | Sous-réseau dédié + DNS privé | Processus local, aucune exposition réseau externe (`bind-address 127.0.0.1`) |
 | Coût | ~25-35 €/mois supplémentaires | **0 € supplémentaire** (inclus dans la VM) |
-| Compatibilité Azure for Students |  Bloqué |  Fonctionne |
+| Compatibilité Azure for Students | ❌ Bloqué | ✅ Fonctionne |
 
 WordPress se connecte à MySQL via `DB_HOST = 'localhost'` (valeur par défaut de `wp-config.php`, aucune modification nécessaire) sur le port standard **3306**, avec un utilisateur dédié (non `root`) créé automatiquement par `user_data.sh`. Cette configuration reste tout à fait adaptée à un **projet pédagogique / démonstration** : elle n'est pas recommandée telle quelle pour une charge de production critique sans ajouter au minimum des sauvegardes automatisées (voir roadmap).
 
 ---
 
-##  Stack technique
+## 🧰 Stack technique
 
 <table>
 <tr><th>Couche</th><th>Technologie</th><th>Rôle</th></tr>
@@ -158,14 +159,15 @@ WordPress se connecte à MySQL via `DB_HOST = 'localhost'` (valeur par défaut d
 <tr><td>MySQL Server 8.x (local)</td><td>Base de données, installée et configurée sur la VM via cloud-init</td></tr>
 <tr><td>WordPress (latest)</td><td>CMS applicatif</td></tr>
 
-<tr><td rowspan="4"><b>Dashboard temps réel</b></td>
-<td>Node.js + Express</td><td>Serveur backend du dashboard</td></tr>
-<tr><td>Socket.io</td><td>Diffusion WebSocket des métriques et logs</td></tr>
+<tr><td rowspan="5"><b>Dashboard entreprise</b></td>
+<td>Node.js + Express</td><td>Serveur backend, API REST, reverse-proxy applicatif</td></tr>
+<tr><td>express-session</td><td>Authentification par session, cookie signé, anti brute-force</td></tr>
+<tr><td>Socket.io</td><td>Diffusion WebSocket authentifiée des métriques, logs et incidents</td></tr>
 <tr><td>pm2</td><td>Supervision et redémarrage automatique du process Node.js</td></tr>
-<tr><td>Tailwind CSS · Chart.js · Lucide Icons</td><td>Interface "Dark Glassmorphism" temps réel</td></tr>
+<tr><td>Tailwind CSS · Chart.js · Lucide Icons</td><td>Interface "Dark/Light Glassmorphism", KPIs, graphiques, tableaux</td></tr>
 
 <tr><td rowspan="2"><b>Observabilité</b></td>
-<td>monitor.sh (Bash + cron)</td><td>Sondes HTTP / 5xx / CPU / RAM / disque / MySQL local, alerting</td></tr>
+<td>monitor.sh (Bash + cron)</td><td>Sondes HTTP / 5xx / latence / CPU / RAM / disque / MySQL local, alerting + journal d'incidents persistant</td></tr>
 <tr><td>Discord/Slack Webhook + mailutils</td><td>Canaux de notification d'incident</td></tr>
 
 <tr><td rowspan="1"><b>Gouvernance</b></td>
@@ -174,7 +176,7 @@ WordPress se connecte à MySQL via `DB_HOST = 'localhost'` (valeur par défaut d
 
 ---
 
-##  Structure du dépôt
+## 📁 Structure du dépôt
 
 ```text
 blockhash-azure-infrastructure/
@@ -206,33 +208,33 @@ blockhash-azure-infrastructure/
     └── Test-BlockHashPreflight.ps1  # Pré-validation Azure Cloud Shell (PowerShell)
 ```
 
-> ℹ Le module `modules/database/` (Azure MySQL Flexible Server) a été retiré du projet - voir [Architecture](#-architecture) pour le détail du changement.
+> ℹ️ Le module `modules/database/` (Azure MySQL Flexible Server) a été retiré du projet - voir [Architecture](#-architecture) pour le détail du changement.
 
 ---
 
-##  Prérequis
+## ✅ Prérequis
 
 | Outil | Version minimale | Disponible par défaut dans Azure Cloud Shell |
 |---|---|:---:|
-| [Terraform](https://developer.hashicorp.com/terraform/downloads) | ≥ 1.6.0 | OK |
-| [Azure CLI](https://learn.microsoft.com/cli/azure/) | ≥ 2.60 | OK |
-| [Az PowerShell](https://learn.microsoft.com/powershell/azure/) | ≥ 11.0 | OK |
+| [Terraform](https://developer.hashicorp.com/terraform/downloads) | ≥ 1.6.0 | ✅ |
+| [Azure CLI](https://learn.microsoft.com/cli/azure/) | ≥ 2.60 | ✅ |
+| [Az PowerShell](https://learn.microsoft.com/powershell/azure/) | ≥ 11.0 | ✅ |
 | Abonnement Azure actif | - | - |
 | Droits IAM | `Contributor` + `User Access Administrator` (ou `Owner`) sur le Resource Group / abonnement, requis pour créer les role assignments Key Vault | - |
 
->  Aucune clé SSH ni identifiant de base de données n'est requis en amont : ils sont générés automatiquement (voir [Sécurité](#-sécurité--gestion-des-secrets)).
+> 💡 Aucune clé SSH ni identifiant de base de données n'est requis en amont : ils sont générés automatiquement (voir [Sécurité](#-sécurité--gestion-des-secrets)).
 
 ---
 
-##  Démarrage rapide
+## 🚀 Démarrage rapide
 
 ### 1. Cloner et configurer
 
 ```bash
-git clone https://github.com/dspitech/blockhash-monitoring-wordpress.git
-cd blockhash-monitoring-wordpress
+git clone <url-du-depot> blockhash-azure-infrastructure
+cd blockhash-azure-infrastructure
 cp terraform.tfvars.example terraform.tfvars
-# Éditez terraform.tfvars : project_name, environment, location, vm_size, etc (optionnel).
+# Éditez terraform.tfvars : project_name, environment, location, vm_size, etc.
 ```
 
 ### 2. Pré-validation (Azure Cloud Shell - PowerShell)
@@ -246,7 +248,8 @@ Ce script vérifie **avant tout déploiement** : session Azure, fournisseurs de 
 ### 3. Déploiement
 
 ```bash
-terraform apply -auto-approve
+terraform init
+terraform apply
 ```
 
 ### 4. Accès aux services
@@ -254,6 +257,13 @@ terraform apply -auto-approve
 ```bash
 terraform output wordpress_url
 terraform output dashboard_url
+
+# Identifiants du dashboard
+terraform output -raw dashboard_admin_username
+az keyvault secret show \
+  --vault-name $(terraform output -raw key_vault_name) \
+  --name dashboard-admin-password \
+  --query value -o tsv
 ```
 
 ### 5. Connexion SSH
@@ -266,7 +276,7 @@ ssh -i blockhash_vm_key.pem azureadmin@$(terraform output -raw vm_public_ip_addr
 
 ---
 
-##  Référence des variables
+## ⚙️ Référence des variables
 
 | Variable | Type | Défaut | Description |
 |---|---|---|---|
@@ -279,28 +289,29 @@ ssh -i blockhash_vm_key.pem azureadmin@$(terraform output -raw vm_public_ip_addr
 | `mysql_database_name` | `string` | `"wordpress"` | Nom de la base de données MySQL locale utilisée par WordPress |
 | `vm_size` | `string` | `"Standard_B2s"` | Taille de la VM Web (2 vCPU / 4 Go RAM) |
 | `vm_admin_username` | `string` | `"azureadmin"` | Utilisateur administrateur SSH |
+| `dashboard_admin_username` | `string` | `"admin"` | Nom d'utilisateur pour la connexion au dashboard de monitoring |
 | `keyvault_purge_protection_enabled` | `bool` | `false` | Protection anti-purge du Key Vault (`true` recommandé en production réelle) |
 | `alert_webhook_url` | `string` (sensible) | `""` | Webhook Discord/Slack, stocké dans Key Vault |
 | `alert_email` | `string` | `"ops@blockhash.io"` | Adresse email de destination des alertes |
 | `tags` | `map(string)` | `{project, environment, managed_by}` | Tags Azure appliqués à toutes les ressources |
 
->  Il n'existe **volontairement aucune variable** `ssh_public_key` ou `mysql_admin_password` : ces valeurs sont générées automatiquement par Terraform.
+> ⚠️ Il n'existe **volontairement aucune variable** `ssh_public_key` ou `mysql_admin_password` : ces valeurs sont générées automatiquement par Terraform.
 >
-> ℹ **v2** : les variables `db_subnet_prefix`, `mysql_sku_name`, `mysql_storage_size_gb` et `mysql_version` ont été retirées - elles n'ont plus d'utilité depuis le passage à une installation MySQL locale sur la VM (voir [Architecture](#-architecture)).
+> ℹ️ **v2** : les variables `db_subnet_prefix`, `mysql_sku_name`, `mysql_storage_size_gb` et `mysql_version` ont été retirées - elles n'ont plus d'utilité depuis le passage à une installation MySQL locale sur la VM (voir [Architecture](#-architecture)).
 
 ---
 
-##  Sécurité & gestion des secrets
+## 🔐 Sécurité & gestion des secrets
 
 Le projet applique le principe **« zéro secret en dur »** de bout en bout - y compris avec MySQL installé localement :
 
 ```mermaid
 flowchart LR
-    A["🎲 random_password<br/>tls_private_key"] -->|génération dynamique| B[" Azure Key Vault<br/>(RBAC)"]
-    B -->|"Secrets User"<br/>role assignment| C[" Identité Managée<br/>Système (VM)"]
-    C -->|jeton IMDS + REST API| D[" user_data.sh<br/>kv-get-secret.sh"]
-    D -->|"CREATE USER ... IDENTIFIED BY"<br/>(stdin, jamais en argument CLI)| E[" MySQL local<br/>(127.0.0.1:3306)"]
-    D -->|injection en mémoire| F[" wp-config.php"]
+    A["🎲 random_password<br/>tls_private_key"] -->|génération dynamique| B["🔑 Azure Key Vault<br/>(RBAC)"]
+    B -->|"Secrets User"<br/>role assignment| C["🪪 Identité Managée<br/>Système (VM)"]
+    C -->|jeton IMDS + REST API| D["📜 user_data.sh<br/>kv-get-secret.sh"]
+    D -->|"CREATE USER ... IDENTIFIED BY"<br/>(stdin, jamais en argument CLI)| E["🗄️ MySQL local<br/>(127.0.0.1:3306)"]
+    D -->|injection en mémoire| F["📄 wp-config.php"]
 
     style B fill:#2ea44f,color:#fff
     style A fill:#f59e0b,color:#000
@@ -311,6 +322,7 @@ flowchart LR
 | Mot de passe utilisateur MySQL | `random_password` (24 car., Terraform) | Key Vault (`mysql-admin-password`) | Lu au boot par la VM via Managed Identity, utilisé pour créer l'utilisateur MySQL **local** et pour `wp-config.php` |
 | Clé privée/publique SSH | `tls_private_key` (RSA 4096, Terraform) | Key Vault (`vm-ssh-private-key`) + `terraform output` sensible | Clé publique injectée dans `admin_ssh_key` de la VM |
 | Webhook d'alerte | Fourni par l'utilisateur (`terraform.tfvars`) | Key Vault (`alert-webhook-url`) | Lu uniquement au moment d'envoyer une alerte réelle |
+| Mot de passe admin du dashboard | `random_password` (20 car., Terraform) | Key Vault (`dashboard-admin-password`) | Lu au boot, écrit dans `/etc/blockhash/dashboard-auth.env` (chmod 600, root uniquement), lu par le process Node.js au démarrage |
 
 **Points clés d'implémentation :**
 
@@ -321,18 +333,37 @@ flowchart LR
 - MySQL local écoute uniquement sur `127.0.0.1` (`bind-address` par défaut d'Ubuntu) : aucune exposition réseau externe, aucune règle NSG dédiée nécessaire.
 - Un durcissement minimal est appliqué au premier démarrage (suppression des comptes anonymes, interdiction du compte `root` hors localhost, suppression de la base `test`).
 - Les variables d'environnement contenant des identifiants sont explicitement `unset` après usage sur la VM.
+- **Dashboard protégé par authentification** : le reverse-proxy Nginx redirige `/dashboard` et `/socket.io/` entièrement vers le backend Node.js (plus de fichiers statiques exposés directement), qui applique une vérification de session **avant** de servir la moindre page ou le moindre appel API - y compris les connexions WebSocket (middleware `express-session` partagé avec Socket.io). Comparaison du mot de passe en temps constant (`crypto.timingSafeEqual`) et limitation anti brute-force (5 tentatives / 5 min par IP).
 - Le **state Terraform** contient nécessairement ces valeurs (contrainte technique incontournable pour la création des ressources Azure) : utilisez un **backend distant chiffré** (Azure Storage Account avec chiffrement et accès restreint) et ne versionnez jamais le state dans Git.
 
 ---
 
-##  Observabilité & Monitoring
+## 📊 Observabilité & Monitoring
 
-### Dashboard temps réel (`/dashboard`)
+Le dashboard (`/dashboard`) est une **application interne protégée par authentification**, accessible uniquement via `/dashboard/login` (identifiants générés par Terraform, stockés dans Key Vault - voir [Sécurité](#-sécurité--gestion-des-secrets)).
 
-- Cartes de statut : disponibilité HTTP, CPU, RAM, disque.
-- Graphique CPU glissant (30 derniers points, Chart.js).
-- Terminal de logs Nginx en direct (WebSocket, code couleur par statut HTTP).
-- Déclenchement manuel d'un test d'erreur 5xx depuis l'interface.
+### KPIs (bandeau d'en-tête)
+
+| KPI | Calcul |
+|---|---|
+| Disponibilité 24h / 7j | % d'échantillons système avec statut HTTP ≠ `000`, sur l'historique persistant |
+| Latence moyenne / p95 | Calculée en direct depuis `$request_time` (Nginx), fenêtre glissante de 1000 requêtes |
+| Requêtes aujourd'hui | Compteur en direct depuis le flux de logs Nginx (réinitialisé chaque jour) |
+| Incidents (24h) | Nombre d'alertes journalisées dans les dernières 24h |
+
+### Historique & tendances
+
+- **Graphique multi-plage** (1h / 6h / 24h / 7j) CPU/RAM/Disque, alimenté par un historique persistant sur disque (1 point/minute, rétention ~7 jours, `/var/lib/blockhash/metrics-history.jsonl`).
+- **Répartition des codes HTTP** (2xx/3xx/4xx/5xx) en donut chart, calculée en direct depuis le flux de logs.
+- **Top endpoints** et **Top adresses IP** (tableaux, comptage en direct, réinitialisé chaque jour).
+
+### Santé & incidents
+
+- **Panneau de santé des services** : Nginx, PHP-FPM, MySQL local, dashboard Node.js lui-même (statut actif/inactif via `systemctl is-active`).
+- **Journal d'incidents persistant** : chaque alerte de `monitor.sh` est journalisée (`/var/log/blockhash-incidents.log` → `/var/lib/blockhash/incidents.jsonl`) et déclenche une **notification "toast" en direct** dans l'interface, en plus des canaux externes (webhook/email).
+- **Terminal de logs Nginx en direct** (WebSocket, code couleur par statut HTTP).
+- **Déclenchement manuel** d'un test d'erreur 5xx depuis l'interface.
+- **Thème clair/sombre**, préférence mémorisée localement.
 
 ### Sondes automatiques (`monitor.sh`, cron toutes les 5 min)
 
@@ -345,11 +376,13 @@ flowchart LR
 | Espace disque | > 85 % |
 | Disponibilité MySQL local | Échec de `mysqladmin ping` |
 
-Les alertes sont envoyées simultanément par **webhook** (Discord/Slack) et par **email** (`mailutils`).
+Les alertes sont envoyées simultanément par **webhook** (Discord/Slack), par **email** (`mailutils`), et **journalisées de façon persistante** pour alimenter le dashboard.
+
+> ℹ️ **Limites connues** (compromis assumés pour un outil interne à faible échelle) : les compteurs de codes HTTP / top endpoints / top IPs vivent en mémoire et sont réinitialisés à chaque redémarrage du process Node.js (rare, géré par pm2) ; les sessions de connexion ne survivent pas non plus à un redémarrage. L'historique des métriques et des incidents, lui, est bien persistant sur disque.
 
 ---
 
-##  Ressources Azure provisionnées
+## 🧱 Ressources Azure provisionnées
 
 | Ressource | Nom (convention) | Module |
 |---|---|---|
@@ -364,17 +397,18 @@ Les alertes sont envoyées simultanément par **webhook** (Discord/Slack) et par
 | Identité managée système | (rattachée à la VM) | `vm` |
 | MySQL Server 8.x | *(local, sur la VM - pas de ressource Azure dédiée)* | `vm` (provisionné par `user_data.sh`) |
 
->  **v2** : plus de sous-réseau délégué MySQL, plus de zone DNS privée, plus de serveur MySQL Flexible Server - MySQL est un simple service Linux tournant sur la VM Web (voir [Architecture](#-architecture)).
+> ℹ️ **v2** : plus de sous-réseau délégué MySQL, plus de zone DNS privée, plus de serveur MySQL Flexible Server - MySQL est un simple service Linux tournant sur la VM Web (voir [Architecture](#-architecture)).
 
 ---
 
-##  Sorties Terraform (outputs)
+## 📤 Sorties Terraform (outputs)
 
 | Output | Sensible | Description |
 |---|:---:|---|
 | `vm_public_ip_address` | non | Adresse IP publique de la VM |
 | `wordpress_url` | non | URL du site WordPress |
-| `dashboard_url` | non | URL du dashboard de monitoring |
+| `dashboard_url` | non | URL de connexion au dashboard de monitoring |
+| `dashboard_admin_username` | non | Nom d'utilisateur du dashboard (mot de passe : Key Vault) |
 | `ssh_connection_command` | non | Commande SSH prête à l'emploi |
 | `resource_group_name` | non | Nom du Resource Group |
 | `key_vault_name` | non | Nom du Key Vault |
@@ -383,7 +417,7 @@ Les alertes sont envoyées simultanément par **webhook** (Discord/Slack) et par
 
 ---
 
-##  Estimation des coûts
+## 💰 Estimation des coûts
 
 > Estimation indicative pour la région **Norway East**, hors taxes, susceptible d'évoluer selon la tarification Azure en vigueur.
 
@@ -396,26 +430,44 @@ Les alertes sont envoyées simultanément par **webhook** (Discord/Slack) et par
 | MySQL Server (local) | Inclus dans la VM | **0 € supplémentaire** |
 | **Total estimé** | | **~35-45 € / mois** |
 
->  Par rapport à la v1 (avec Azure Database for MySQL Flexible Server, ~65-90 €/mois), l'installation de MySQL en local sur la VM supprime le coût du serveur managé (~25-35 €/mois) et de son stockage dédié (~2-3 €/mois). Utilisez la [calculatrice de prix Azure](https://azure.microsoft.com/pricing/calculator/) pour un chiffrage précis selon votre région et vos volumes réels.
+> 💡 Par rapport à la v1 (avec Azure Database for MySQL Flexible Server, ~65-90 €/mois), l'installation de MySQL en local sur la VM supprime le coût du serveur managé (~25-35 €/mois) et de son stockage dédié (~2-3 €/mois). Utilisez la [calculatrice de prix Azure](https://azure.microsoft.com/pricing/calculator/) pour un chiffrage précis selon votre région et vos volumes réels.
 
 ---
 
-##  Cycle de vie & opérations
+## 🔄 Cycle de vie & opérations
 
 ```bash
 # Mise à jour de l'infrastructure après modification du code
 terraform plan
-terraform apply -auto-approve
+terraform apply
 
 # Destruction complète de l'environnement
-terraform destroy -auto-approve
+terraform destroy
 ```
 
 > Si `keyvault_purge_protection_enabled = true`, le Key Vault reste en "soft delete" 7 jours après `destroy`, bloquant la réutilisation immédiate du même nom de projet/environnement.
 
 ---
 
-##  Questions fréquentes / Dépannage
+## ❓ Questions fréquentes / Dépannage
+
+<details>
+<summary><b>Comment se connecter au dashboard pour la première fois ?</b></summary>
+
+Ouvrez `terraform output dashboard_url` (redirige automatiquement vers `/dashboard/login`), utilisateur = `terraform output -raw dashboard_admin_username`, mot de passe récupéré via `az keyvault secret show --vault-name <key_vault_name> --name dashboard-admin-password --query value -o tsv`. Aucun mot de passe par défaut n'est utilisable : il est généré aléatoirement par Terraform.
+</details>
+
+<details>
+<summary><b>J'ai oublié le mot de passe du dashboard, comment le changer ?</b></summary>
+
+Modifiez le secret `dashboard-admin-password` dans Key Vault (`az keyvault secret set ...`), puis mettez à jour `/etc/blockhash/dashboard-auth.env` sur la VM (via SSH) avec la nouvelle valeur, et relancez le process : `pm2 restart blockhash-dashboard`. Terraform ne réagit pas automatiquement à un changement de secret fait hors de son contrôle.
+</details>
+
+<details>
+<summary><b>Où sont stockées les données historiques du dashboard (métriques, incidents) ?</b></summary>
+
+Dans `/var/lib/blockhash/` sur la VM (fichiers JSON Lines : `metrics-history.jsonl`, `incidents.jsonl`). Ce n'est pas une base de données externe : en cas de suppression de la VM (`terraform destroy`), cet historique est perdu. Pour une rétention plus longue ou multi-VM, voir la [Feuille de route](#-feuille-de-route) (sauvegardes vers Azure Blob Storage).
+</details>
 
 <details>
 <summary><b>Pourquoi ne pas utiliser Azure Database for MySQL Flexible Server ?</b></summary>
@@ -455,31 +507,31 @@ Oui : modifiez `location` dans `terraform.tfvars`, puis relancez `Test-BlockHash
 
 ---
 
-##  Feuille de route
+## 🗺️ Feuille de route
 
 Les évolutions suivantes sont documentées séparément dans la roadmap opérationnelle BlockHash (sécurité applicative, haute disponibilité, sauvegardes, APM, CI/CD) :
 
--  HTTPS/SSL automatisé (Certbot) + Fail2ban/GeoIP
--  Haute disponibilité (VM Scale Sets, Load Balancer)
--  Sauvegardes automatisées vers Azure Blob Storage
--  APM avancé (latence p95/p99, calculateur de SLA)
--  Pipeline CI/CD (GitHub Actions / Azure DevOps, tflint, Checkov)
+- 🔒 HTTPS/SSL automatisé (Certbot) + Fail2ban/GeoIP
+- 📈 Haute disponibilité (VM Scale Sets, Load Balancer)
+- 💾 Sauvegardes automatisées vers Azure Blob Storage
+- 🔍 APM avancé (latence p95/p99, calculateur de SLA)
+- 🔁 Pipeline CI/CD (GitHub Actions / Azure DevOps, tflint, Checkov)
 
 ---
 
-##  Bonnes pratiques appliquées
+## 🏅 Bonnes pratiques appliquées
 
--  Infrastructure 100 % modulaire et réutilisable (4 modules indépendants)
--  Zéro secret en dur - génération dynamique + Key Vault + Managed Identity
--  Nommage cohérent et prévisible de toutes les ressources
--  Réseau segmenté (sous-réseaux dédiés, NSG à moindre privilège)
--  Observabilité intégrée dès le provisioning (pas d'outil tiers requis)
--  Validation pré-déploiement automatisée (quotas, conventions, `terraform plan`)
--  Documentation exhaustive et code abondamment commenté
+- ✅ Infrastructure 100 % modulaire et réutilisable (4 modules indépendants)
+- ✅ Zéro secret en dur - génération dynamique + Key Vault + Managed Identity
+- ✅ Nommage cohérent et prévisible de toutes les ressources
+- ✅ Réseau segmenté (sous-réseaux dédiés, NSG à moindre privilège)
+- ✅ Observabilité intégrée dès le provisioning (pas d'outil tiers requis)
+- ✅ Validation pré-déploiement automatisée (quotas, conventions, `terraform plan`)
+- ✅ Documentation exhaustive et code abondamment commenté
 
 ---
 
-##  Licence & contact
+## 📄 Licence & contact
 
 Projet interne **BlockHash** - usage propriétaire.
 

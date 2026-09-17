@@ -13,8 +13,13 @@ output "wordpress_url" {
 }
 
 output "dashboard_url" {
-  description = "URL d'accès au dashboard de monitoring temps réel."
-  value       = "http://${module.network.public_ip_address}/dashboard"
+  description = "URL d'accès au dashboard de monitoring temps réel (page de connexion)."
+  value       = "http://${module.network.public_ip_address}/dashboard/login"
+}
+
+output "dashboard_admin_username" {
+  description = "Nom d'utilisateur pour se connecter au dashboard (mot de passe : voir Key Vault, secret 'dashboard-admin-password')."
+  value       = var.dashboard_admin_username
 }
 
 output "ssh_connection_command" {

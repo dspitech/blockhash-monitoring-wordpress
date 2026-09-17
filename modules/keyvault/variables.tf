@@ -34,6 +34,12 @@ variable "alert_webhook_url" {
   sensitive   = true
 }
 
+variable "dashboard_admin_username" {
+  description = "Nom d'utilisateur pour la connexion au dashboard de monitoring."
+  type        = string
+  default     = "admin"
+}
+
 variable "purge_protection_enabled" {
   description = <<-EOT
     Active la protection contre la purge définitive du Key Vault. Recommandé

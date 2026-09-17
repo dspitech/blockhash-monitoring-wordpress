@@ -83,14 +83,15 @@ module "network" {
 module "keyvault" {
   source = "./modules/keyvault"
 
-  project_name         = var.project_name
-  environment          = var.environment
-  location             = var.location
-  resource_group_name  = module.network.resource_group_name
-  mysql_admin_login    = var.mysql_admin_login
-  alert_webhook_url    = var.alert_webhook_url
-  purge_protection_enabled = var.keyvault_purge_protection_enabled
-  tags                 = var.tags
+  project_name              = var.project_name
+  environment               = var.environment
+  location                  = var.location
+  resource_group_name       = module.network.resource_group_name
+  mysql_admin_login         = var.mysql_admin_login
+  alert_webhook_url         = var.alert_webhook_url
+  dashboard_admin_username  = var.dashboard_admin_username
+  purge_protection_enabled  = var.keyvault_purge_protection_enabled
+  tags                      = var.tags
 
   depends_on = [module.network]
 }
@@ -131,11 +132,13 @@ module "vm" {
   # Références au Key Vault : uniquement des noms/identifiants, jamais des
   # valeurs secrètes. user_data.sh utilisera l'identité managée de la VM
   # pour interroger Key Vault et récupérer les vraies valeurs au démarrage.
-  key_vault_name                   = module.keyvault.key_vault_name
-  key_vault_uri                    = module.keyvault.key_vault_uri
-  mysql_admin_login_secret_name    = module.keyvault.mysql_admin_login_secret_name
-  mysql_admin_password_secret_name = module.keyvault.mysql_admin_password_secret_name
-  alert_webhook_url_secret_name    = module.keyvault.alert_webhook_url_secret_name
+  key_vault_name                       = module.keyvault.key_vault_name
+  key_vault_uri                        = module.keyvault.key_vault_uri
+  mysql_admin_login_secret_name        = module.keyvault.mysql_admin_login_secret_name
+  mysql_admin_password_secret_name     = module.keyvault.mysql_admin_password_secret_name
+  alert_webhook_url_secret_name        = module.keyvault.alert_webhook_url_secret_name
+  dashboard_admin_password_secret_name = module.keyvault.dashboard_admin_password_secret_name
+  dashboard_admin_username             = var.dashboard_admin_username
 
   # Nom de la base MySQL locale — non sensible.
   mysql_database_name = var.mysql_database_name

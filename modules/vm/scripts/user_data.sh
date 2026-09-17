@@ -1,45 +1,62 @@
 #!/bin/bash
 ##############################################################################
-# user_data.sh — Script de provisioning cloud-init exécuté au premier
+# user_data.sh - Script de provisioning cloud-init exécuté au premier
 # démarrage de la VM Web BlockHash (Ubuntu 24.04 LTS).
 #
 # GESTION DES SECRETS : ce script ne contient AUCUN mot de passe, clé SSH ou
 # identifiant de base de données en clair. Les seules valeurs interpolées
 # par Terraform (templatefile) ci-dessous sont NON SENSIBLES :
-#   - key_vault_name                    : nom du Key Vault à interroger
-#   - mysql_admin_login_secret_name     : NOM du secret (pas sa valeur)
-#   - mysql_admin_password_secret_name  : NOM du secret (pas sa valeur)
-#   - alert_webhook_url_secret_name     : NOM du secret (pas sa valeur)
-#   - mysql_database_name               : nom de la base ("wordpress")
-#   - alert_email                       : adresse email de destination
+#   - key_vault_name                        : nom du Key Vault à interroger
+#   - mysql_admin_login_secret_name         : NOM du secret (pas sa valeur)
+#   - mysql_admin_password_secret_name      : NOM du secret (pas sa valeur)
+#   - alert_webhook_url_secret_name         : NOM du secret (pas sa valeur)
+#   - dashboard_admin_password_secret_name  : NOM du secret (pas sa valeur)
+#   - dashboard_admin_username              : nom d'utilisateur du dashboard
+#   - mysql_database_name                   : nom de la base ("wordpress")
+#   - alert_email                           : adresse email de destination
 #
-# Les VALEURS secrètes elles-mêmes (login/mot de passe MySQL, webhook) sont
-# récupérées UNIQUEMENT à l'exécution, depuis Azure Key Vault, en utilisant
-# l'identité managée système (Managed Identity) de la VM via le service de
-# métadonnées IMDS (http://169.254.169.254). Elles ne transitent jamais par
-# le state Terraform sous cette forme, ni par un fichier de configuration
-# en clair sur la VM.
+# Les VALEURS secrètes elles-mêmes (mots de passe MySQL/dashboard, webhook)
+# sont récupérées UNIQUEMENT à l'exécution, depuis Azure Key Vault, en
+# utilisant l'identité managée système (Managed Identity) de la VM via le
+# service de métadonnées IMDS (http://169.254.169.254). Elles ne transitent
+# jamais par le state Terraform sous cette forme, ni par un fichier de
+# configuration en clair accessible à un utilisateur non privilégié sur la VM.
 #
 # ARCHITECTURE MySQL (v2) : Azure Database for MySQL Flexible Server a été
 # abandonné (restriction "ProvisionNotSupportedForRegion" constatée sur
 # l'abonnement Azure for Students, indépendante de la région). MySQL Server
 # 8.x est donc installé et configuré DIRECTEMENT SUR CETTE VM (127.0.0.1),
 # et WordPress s'y connecte en local plutôt qu'à un serveur managé distant.
-# Le login/mot de passe de l'utilisateur MySQL applicatif restent générés
-# dynamiquement par Terraform et stockés dans Key Vault, exactement comme
-# avant : seul change ce à quoi ils servent (créer un utilisateur MySQL
-# local au lieu de s'authentifier à un serveur managé).
+#
+# DASHBOARD ENTREPRISE (v3) : le dashboard de monitoring passe d'un simple
+# tableau de bord en lecture libre à une véritable application interne :
+#   - Authentification par session (page de connexion, cookie signé),
+#     identifiants stockés dans Key Vault.
+#   - Persistance de l'historique des métriques sur disque (fichiers JSON
+#     Lines dans /var/lib/blockhash/), avec sélecteur de plage temporelle
+#     (1h / 6h / 24h / 7j) au lieu d'un simple tampon mémoire perdu au
+#     rechargement de la page.
+#   - KPIs calculés : disponibilité (uptime) 24h/7j, latence moyenne
+#     ($request_time Nginx), volume de requêtes du jour.
+#   - Analyse des logs Nginx en direct : répartition des codes HTTP,
+#     top endpoints, top adresses IP.
+#   - Panneau de santé des services système (Nginx, PHP-FPM, MySQL,
+#     dashboard Node.js lui-même).
+#   - Journal d'incidents persistant, alimenté par monitor.sh, avec
+#     notifications "toast" en direct côté navigateur.
+#   - Bascule thème clair/sombre.
 #
 # Étapes réalisées :
-#   1. Mise à jour système & installation des dépendances (dont jq, mysql-server)
-#   2. Mise en place de l'accès Key Vault (config + script kv-get-secret.sh)
-#   3. Installation et configuration de MySQL Server LOCAL (base + utilisateur)
-#   4. Configuration Nginx (WordPress + alias /dashboard + proxy WebSocket)
-#   5. Déploiement et configuration de WordPress (connexion à MySQL local)
-#   6. Script de monitoring enrichi (monitor.sh) + script de test (test_5xx.sh)
-#   7. Planification Cron du monitoring (toutes les 5 minutes)
-#   8. Backend Node.js WebSockets (dashboard/server.js) piloté par pm2
-#   9. Frontend Dashboard (dashboard/index.html) — Dark Mode Glassmorphism
+#    1. Mise à jour système & installation des dépendances (dont jq, mysql-server)
+#    2. Mise en place de l'accès Key Vault (config + script kv-get-secret.sh)
+#    3. Installation et configuration de MySQL Server LOCAL (base + utilisateur)
+#    4. Configuration Nginx (WordPress + proxy dashboard/API/WebSocket + logs enrichis)
+#    5. Déploiement et configuration de WordPress (connexion à MySQL local)
+#    6. Configuration de l'authentification du dashboard (Key Vault)
+#    7. Script de monitoring enrichi (monitor.sh) + script de test (test_5xx.sh)
+#    8. Planification Cron du monitoring (toutes les 5 minutes)
+#    9. Backend Node.js WebSockets + API + auth (dashboard/server.js) piloté par pm2
+#   10. Frontend Dashboard entreprise (dashboard/index.html + login.html)
 ##############################################################################
 
 set -euo pipefail
@@ -52,11 +69,11 @@ echo ">>> [BlockHash] Démarrage du provisioning $(date)"
 ##############################################################################
 export DEBIAN_FRONTEND=noninteractive
 
-echo ">>> [1/9] Mise à jour du système..."
+echo ">>> [1/10] Mise à jour du système..."
 apt-get update -y
 apt-get upgrade -y
 
-echo ">>> [1/9] Installation de Nginx, PHP 8.3, MySQL Server, Node.js, NPM, Mailutils, Curl, jq..."
+echo ">>> [1/10] Installation de Nginx, PHP 8.3, MySQL Server, Node.js, NPM, Mailutils, Curl, jq..."
 apt-get install -y \
     nginx \
     mysql-server \
@@ -81,7 +98,7 @@ npm install -g pm2
 ##############################################################################
 # 2. ACCES AZURE KEY VAULT VIA L'IDENTITE MANAGEE DE LA VM
 ##############################################################################
-echo ">>> [2/9] Mise en place de l'accès à Key Vault (identité managée)..."
+echo ">>> [2/10] Mise en place de l'accès à Key Vault (identité managée)..."
 
 mkdir -p /etc/blockhash
 
@@ -92,6 +109,7 @@ KEY_VAULT_NAME=${key_vault_name}
 MYSQL_LOGIN_SECRET_NAME=${mysql_admin_login_secret_name}
 MYSQL_PASSWORD_SECRET_NAME=${mysql_admin_password_secret_name}
 ALERT_WEBHOOK_SECRET_NAME=${alert_webhook_url_secret_name}
+DASHBOARD_PASSWORD_SECRET_NAME=${dashboard_admin_password_secret_name}
 ALERT_EMAIL=${alert_email}
 ENV_EOF
 
@@ -154,7 +172,7 @@ chmod 700 /usr/local/bin/kv-get-secret.sh
 ##############################################################################
 # 3. INSTALLATION & CONFIGURATION DE MYSQL SERVER (LOCAL)
 ##############################################################################
-echo ">>> [3/9] Installation et configuration de MySQL Server local..."
+echo ">>> [3/10] Installation et configuration de MySQL Server local..."
 
 systemctl enable mysql
 systemctl start mysql
@@ -168,10 +186,10 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-echo ">>> [3/9] Récupération des identifiants MySQL depuis Azure Key Vault..."
+echo ">>> [3/10] Récupération des identifiants MySQL depuis Azure Key Vault..."
 
 # Récupérés UNE SEULE FOIS ici, puis réutilisés à l'étape 5 (wp-config.php)
-# via ces mêmes variables d'environnement exportées — évite un second aller-
+# via ces mêmes variables d'environnement exportées - évite un second aller-
 # retour vers Key Vault pour la même information.
 source /etc/blockhash/keyvault.env
 
@@ -180,7 +198,7 @@ export MYSQL_ADMIN_PASSWORD
 MYSQL_ADMIN_LOGIN=$(/usr/local/bin/kv-get-secret.sh "$MYSQL_LOGIN_SECRET_NAME" 20 15)
 MYSQL_ADMIN_PASSWORD=$(/usr/local/bin/kv-get-secret.sh "$MYSQL_PASSWORD_SECRET_NAME" 20 15)
 
-echo ">>> [3/9] Création de la base '${mysql_database_name}' et de l'utilisateur applicatif local..."
+echo ">>> [3/10] Création de la base '${mysql_database_name}' et de l'utilisateur applicatif local..."
 
 # Le mot de passe n'est JAMAIS passé en argument de ligne de commande (ce
 # qui serait visible via "ps aux") : il est transmis au client mysql via
@@ -208,12 +226,31 @@ DROP DATABASE IF EXISTS test;
 FLUSH PRIVILEGES;
 SQL_EOF
 
-echo ">>> [3/9] MySQL Server local opérationnel (base '${mysql_database_name}' prête)."
+echo ">>> [3/10] MySQL Server local opérationnel (base '${mysql_database_name}' prête)."
 
 ##############################################################################
 # 4. CONFIGURATION NGINX
 ##############################################################################
-echo ">>> [4/9] Configuration du virtual host Nginx..."
+echo ">>> [4/10] Configuration du format de log enrichi (latence applicative)..."
+
+# Le paquet nginx d'Ubuntu inclut automatiquement tout fichier présent dans
+# /etc/nginx/conf.d/ à l'intérieur du bloc "http" de nginx.conf (directive
+# "include /etc/nginx/conf.d/*.conf;" déjà présente par défaut) : on peut
+# donc déclarer un log_format personnalisé ici sans jamais avoir à modifier
+# nginx.conf lui-même (plus sûr qu'une édition en place par sed/awk).
+mkdir -p /etc/nginx/conf.d
+
+cat > /etc/nginx/conf.d/blockhash-log-format.conf << 'LOGFORMAT_EOF'
+# Format de log BlockHash : ajoute le temps de traitement de la requête
+# ($request_time, PHP-FPM inclus), indispensable pour calculer la latence
+# moyenne / p95 affichée dans le dashboard de monitoring.
+log_format blockhash '$remote_addr - $remote_user [$time_local] '
+                      '"$request" $status $body_bytes_sent '
+                      '"$http_referer" "$http_user_agent" '
+                      'rt=$request_time';
+LOGFORMAT_EOF
+
+echo ">>> [4/10] Configuration du virtual host Nginx..."
 
 cat > /etc/nginx/sites-available/blockhash << 'NGINX_EOF'
 server {
@@ -224,7 +261,7 @@ server {
 
     client_max_body_size 64M;
 
-    access_log /var/log/nginx/access.log;
+    access_log /var/log/nginx/access.log blockhash;
     error_log  /var/log/nginx/error.log;
 
     location / {
@@ -237,9 +274,20 @@ server {
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }
 
+    # Le dashboard entier (page HTML, API REST, WebSocket) est désormais
+    # intégralement proxifié vers le backend Node.js, qui applique lui-même
+    # l'authentification par session AVANT de servir le moindre fichier.
+    # (v2 servait /dashboard en fichiers statiques via "alias", ce qui
+    # contournait totalement l'authentification applicative - corrigé ici.)
     location /dashboard {
-        alias /var/www/html/dashboard;
-        try_files $uri $uri/ /dashboard/index.html;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_cookie_path / /;
     }
 
     location /socket.io/ {
@@ -249,6 +297,7 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_cookie_path / /;
     }
 
     location ~* /(wp-config\.php|\.htaccess) {
@@ -260,6 +309,7 @@ NGINX_EOF
 ln -sf /etc/nginx/sites-available/blockhash /etc/nginx/sites-enabled/blockhash
 rm -f /etc/nginx/sites-enabled/default
 
+nginx -t
 systemctl enable nginx
 systemctl enable php8.3-fpm
 systemctl restart php8.3-fpm
@@ -268,7 +318,7 @@ systemctl restart nginx
 ##############################################################################
 # 5. DEPLOIEMENT & CONFIGURATION DE WORDPRESS (connexion MySQL locale)
 ##############################################################################
-echo ">>> [5/9] Téléchargement et déploiement de WordPress..."
+echo ">>> [5/10] Téléchargement et déploiement de WordPress..."
 
 cd /tmp
 curl -sSL -O https://wordpress.org/latest.tar.gz
@@ -280,7 +330,7 @@ rm -rf /tmp/wordpress /tmp/latest.tar.gz
 
 cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
 
-echo ">>> [5/9] Injection des identifiants MySQL dans wp-config.php..."
+echo ">>> [5/10] Injection des identifiants MySQL dans wp-config.php..."
 
 # MYSQL_ADMIN_LOGIN et MYSQL_ADMIN_PASSWORD ont déjà été récupérés depuis
 # Key Vault à l'étape 3 (et restent exportés dans l'environnement de ce
@@ -306,8 +356,8 @@ PYEOF
 
 # Le nom de la base n'est PAS un secret (un nom de base seul ne permet
 # aucune connexion sans les identifiants ci-dessus) : il est injecté
-# directement par Terraform. DB_HOST reste "localhost" — valeur par défaut
-# de wp-config-sample.php — puisque MySQL tourne désormais SUR CETTE VM
+# directement par Terraform. DB_HOST reste "localhost" - valeur par défaut
+# de wp-config-sample.php - puisque MySQL tourne désormais SUR CETTE VM
 # (aucun remplacement de host nécessaire, contrairement à la v1 qui
 # pointait vers le FQDN d'un serveur MySQL Flexible Server distant).
 sed -i "s/database_name_here/${mysql_database_name}/" /var/www/html/wp-config.php
@@ -334,20 +384,50 @@ chown -R www-data:www-data /var/www/html
 find /var/www/html -type d -exec chmod 755 {} \;
 find /var/www/html -type f -exec chmod 644 {} \;
 
+
 ##############################################################################
-# 6. SCRIPT DE MONITORING ENRICHI (monitor.sh) + SCRIPT DE TEST (test_5xx.sh)
+# 6. CONFIGURATION DE L'AUTHENTIFICATION DU DASHBOARD (Key Vault)
 ##############################################################################
-echo ">>> [6/9] Installation du script de monitoring /usr/local/bin/monitor.sh..."
+echo ">>> [6/10] Récupération des identifiants du dashboard depuis Key Vault..."
+
+source /etc/blockhash/keyvault.env
+
+# Le mot de passe est stocké dans un fichier NON world-readable
+# (chmod 600, propriétaire root), lu au démarrage par le process Node.js du
+# dashboard (lancé par pm2 en tant que root, comme le reste de la stack de
+# ce projet). Il n'est jamais interpolé par Terraform ni écrit en dur : sa
+# valeur provient uniquement de Key Vault, récupérée à l'exécution via
+# l'identité managée de la VM (même mécanisme que pour MySQL).
+DASHBOARD_ADMIN_PASSWORD=$(/usr/local/bin/kv-get-secret.sh "$DASHBOARD_PASSWORD_SECRET_NAME" 20 15)
+
+cat > /etc/blockhash/dashboard-auth.env << AUTH_EOF
+DASHBOARD_ADMIN_USER=${dashboard_admin_username}
+DASHBOARD_ADMIN_PASSWORD=$DASHBOARD_ADMIN_PASSWORD
+AUTH_EOF
+
+chmod 600 /etc/blockhash/dashboard-auth.env
+chown root:root /etc/blockhash/dashboard-auth.env
+
+unset DASHBOARD_ADMIN_PASSWORD
+
+echo ">>> [6/10] Authentification du dashboard configurée (utilisateur : ${dashboard_admin_username})."
+
+##############################################################################
+# 7. SCRIPT DE MONITORING ENRICHI (monitor.sh) + SCRIPT DE TEST (test_5xx.sh)
+##############################################################################
+echo ">>> [7/10] Installation du script de monitoring /usr/local/bin/monitor.sh..."
 
 cat > /usr/local/bin/monitor.sh << 'MONITOR_EOF'
 #!/bin/bash
 ##############################################################################
-# monitor.sh — Script de surveillance applicative & système pour BlockHash.
+# monitor.sh - Script de surveillance applicative & système pour BlockHash.
 #
 # Exécuté toutes les 5 minutes par cron (voir /etc/cron.d/blockhash-monitor).
 # Le webhook d'alerte n'est JAMAIS stocké en clair sur disque : il est
 # récupéré depuis Key Vault via kv-get-secret.sh, uniquement au moment où
 # une alerte doit effectivement être envoyée (voir send_alert ci-dessous).
+# Chaque alerte est également journalisée dans /var/log/blockhash-incidents.log,
+# lu en direct par le dashboard Node.js pour son journal d'incidents.
 ##############################################################################
 
 WEBSITE_URL="http://localhost/"
@@ -364,6 +444,12 @@ ALERTS=""
 send_alert() {
     local message="$1"
     echo "[ALERTE] $message"
+
+    # Journalisation persistante de l'incident : le backend Node.js du
+    # dashboard suit ce fichier en continu (tail -F, même mécanisme que pour
+    # les logs Nginx) afin d'alimenter le journal d'incidents affiché dans
+    # l'interface et de déclencher une notification "toast" en direct.
+    echo "$TIMESTAMP|$message" >> /var/log/blockhash-incidents.log
 
     source /etc/blockhash/keyvault.env
 
@@ -466,12 +552,12 @@ MONITOR_EOF
 
 chmod +x /usr/local/bin/monitor.sh
 
-echo ">>> [6/9] Installation du script de test d'alerte /usr/local/bin/test_5xx.sh..."
+echo ">>> [7/10] Installation du script de test d'alerte /usr/local/bin/test_5xx.sh..."
 
 cat > /usr/local/bin/test_5xx.sh << 'TEST_EOF'
 #!/bin/bash
 ##############################################################################
-# test_5xx.sh — Déclenche artificiellement des erreurs HTTP 500 afin de
+# test_5xx.sh - Déclenche artificiellement des erreurs HTTP 500 afin de
 # valider la chaîne d'alerte de monitor.sh (y compris la récupération du
 # webhook depuis Key Vault).
 ##############################################################################
@@ -504,9 +590,9 @@ TEST_EOF
 chmod +x /usr/local/bin/test_5xx.sh
 
 ##############################################################################
-# 7. PLANIFICATION CRON DU MONITORING (toutes les 5 minutes)
+# 8. PLANIFICATION CRON DU MONITORING (toutes les 5 minutes)
 ##############################################################################
-echo ">>> [7/9] Planification cron de monitor.sh..."
+echo ">>> [8/10] Planification cron de monitor.sh..."
 
 cat > /etc/cron.d/blockhash-monitor << 'CRON_EOF'
 */5 * * * * root /usr/local/bin/monitor.sh >> /var/log/blockhash-monitor.log 2>&1
@@ -514,22 +600,26 @@ CRON_EOF
 
 chmod 644 /etc/cron.d/blockhash-monitor
 touch /var/log/blockhash-monitor.log
+touch /var/log/blockhash-incidents.log
+chmod 644 /var/log/blockhash-incidents.log
 
 ##############################################################################
-# 8. BACKEND NODE.JS WEBSOCKETS (dashboard/server.js)
+# 9. BACKEND NODE.JS - API, AUTHENTIFICATION, WEBSOCKETS (dashboard/server.js)
 ##############################################################################
-echo ">>> [8/9] Déploiement du backend Node.js (dashboard/server.js)..."
+echo ">>> [9/10] Déploiement du backend Node.js (dashboard/server.js)..."
 
 mkdir -p /var/www/html/dashboard
+mkdir -p /var/lib/blockhash
 
 cat > /var/www/html/dashboard/package.json << 'PKG_EOF'
 {
   "name": "blockhash-dashboard-server",
-  "version": "1.0.0",
-  "description": "Backend WebSocket temps reel pour le dashboard de monitoring BlockHash",
+  "version": "2.0.0",
+  "description": "Backend du dashboard entreprise BlockHash : auth, API, WebSocket temps reel",
   "main": "server.js",
   "dependencies": {
     "express": "^4.19.2",
+    "express-session": "^1.18.0",
     "socket.io": "^4.7.5"
   }
 }
@@ -537,18 +627,38 @@ PKG_EOF
 
 cat > /var/www/html/dashboard/server.js << 'SERVER_EOF'
 // ============================================================================
-// server.js — Backend WebSocket temps reel du Dashboard BlockHash
+// server.js - Backend du Dashboard entreprise BlockHash
 //
-// Ce fichier n'utilise aucun template literal JavaScript (backticks avec
-// interpolation) afin d'eviter tout conflit avec le mecanisme
-// d'interpolation "templatefile" de Terraform qui a genere ce script
-// cloud-init. Toutes les concatenations de chaines utilisent l'operateur "+".
+// Fonctionnalités :
+//   - Authentification par session (identifiants lus depuis un fichier local
+//     non world-readable, alimenté par Key Vault au provisioning).
+//   - Diffusion temps réel des métriques système (CPU/RAM/Disque/HTTP) via
+//     Socket.io, réservée aux sockets authentifiés.
+//   - Persistance de l'historique des métriques sur disque (JSON Lines),
+//     avec API de lecture par plage temporelle (1h/6h/24h/7j).
+//   - Calcul de KPIs : disponibilité (uptime) 24h/7j, latence moyenne/p95
+//     (à partir de $request_time Nginx), volume de requêtes du jour.
+//   - Analyse en direct du flux de logs Nginx : répartition des codes HTTP,
+//     top endpoints, top adresses IP.
+//   - Panneau de santé des services système (Nginx, PHP-FPM, MySQL,
+//     dashboard lui-même).
+//   - Journal d'incidents persistant (alimenté par monitor.sh), avec
+//     notification "toast" en direct.
+//
+// NOTE : ce fichier n'utilise volontairement AUCUN template literal
+// JavaScript (chaines entre backticks avec interpolation) afin d'eviter tout conflit
+// avec le mecanisme d'interpolation "templatefile" de Terraform qui a
+// genere le script cloud-init injectant ce fichier. Toutes les
+// concatenations de chaines utilisent l'operateur "+".
 // ============================================================================
 
 var express = require("express");
+var session = require("express-session");
 var http = require("http");
 var os = require("os");
 var fs = require("fs");
+var path = require("path");
+var crypto = require("crypto");
 var child_process = require("child_process");
 var socketio = require("socket.io");
 
@@ -560,9 +670,183 @@ var io = socketio(server, {
 
 var PORT = 3000;
 var NGINX_ACCESS_LOG = "/var/log/nginx/access.log";
+var INCIDENTS_LOG = "/var/log/blockhash-incidents.log";
+var DATA_DIR = "/var/lib/blockhash";
+var METRICS_HISTORY_FILE = path.join(DATA_DIR, "metrics-history.jsonl");
+var INCIDENTS_HISTORY_FILE = path.join(DATA_DIR, "incidents.jsonl");
+var MAX_HISTORY_LINES = 10080; // ~7 jours a 1 point / minute
 
-app.use(express.static(__dirname));
+try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+} catch (e) {
+    console.log("Impossible de creer " + DATA_DIR + " : " + e.message);
+}
 
+// ----------------------------------------------------------------------------
+// Authentification : identifiants lus depuis un fichier local (non commite,
+// non world-readable) alimente par Key Vault au provisioning de la VM.
+// Aucun mot de passe n'est jamais code en dur dans ce fichier.
+// ----------------------------------------------------------------------------
+var AUTH_FILE = "/etc/blockhash/dashboard-auth.env";
+var authConfig = { user: "admin", password: null };
+
+function loadAuthConfig() {
+    try {
+        var raw = fs.readFileSync(AUTH_FILE, "utf8");
+        raw.split("\n").forEach(function (line) {
+            var trimmed = line.trim();
+            if (!trimmed || trimmed.indexOf("=") === -1) {
+                return;
+            }
+            var idx = trimmed.indexOf("=");
+            var key = trimmed.substring(0, idx).trim();
+            var value = trimmed.substring(idx + 1).trim();
+            if (key === "DASHBOARD_ADMIN_USER") {
+                authConfig.user = value;
+            } else if (key === "DASHBOARD_ADMIN_PASSWORD") {
+                authConfig.password = value;
+            }
+        });
+    } catch (e) {
+        console.log("ATTENTION : impossible de lire " + AUTH_FILE + " (" + e.message + "). Authentification indisponible.");
+    }
+}
+loadAuthConfig();
+
+// Comparaison en temps constant pour eviter les attaques par mesure de
+// temps de reponse sur la comparaison du mot de passe.
+function safeCompare(a, b) {
+    var bufA = Buffer.from(String(a));
+    var bufB = Buffer.from(String(b));
+    if (bufA.length !== bufB.length) {
+        // Compare quand meme un buffer factice de meme longueur pour ne
+        // pas laisser fuiter d'information via le temps d'execution.
+        crypto.timingSafeEqual(bufA, bufA);
+        return false;
+    }
+    return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Limitation basique des tentatives de connexion (anti brute-force) : 5
+// echecs maximum par IP, blocage de 5 minutes.
+var loginAttempts = {};
+var MAX_LOGIN_ATTEMPTS = 5;
+var LOGIN_LOCKOUT_MS = 5 * 60 * 1000;
+
+function isLockedOut(ip) {
+    var entry = loginAttempts[ip];
+    if (!entry) {
+        return false;
+    }
+    if (entry.count >= MAX_LOGIN_ATTEMPTS && (Date.now() - entry.lastAttempt) < LOGIN_LOCKOUT_MS) {
+        return true;
+    }
+    if ((Date.now() - entry.lastAttempt) >= LOGIN_LOCKOUT_MS) {
+        delete loginAttempts[ip];
+    }
+    return false;
+}
+
+function registerFailedAttempt(ip) {
+    if (!loginAttempts[ip]) {
+        loginAttempts[ip] = { count: 0, lastAttempt: 0 };
+    }
+    loginAttempts[ip].count += 1;
+    loginAttempts[ip].lastAttempt = Date.now();
+}
+
+function clearAttempts(ip) {
+    delete loginAttempts[ip];
+}
+
+// Secret de session genere aleatoirement au demarrage du process : les
+// sessions ne survivent pas a un redemarrage de pm2, ce qui est un
+// compromis acceptable pour un outil interne (evite de gerer un secret de
+// session supplementaire a stocker).
+var sessionMiddleware = session({
+    secret: crypto.randomBytes(32).toString("hex"),
+    name: "blockhash.sid",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: 8 * 60 * 60 * 1000 // 8 heures
+    }
+});
+
+app.use(express.json());
+app.use(sessionMiddleware);
+
+function authRequired(req, res, next) {
+    if (req.session && req.session.authenticated) {
+        next();
+        return;
+    }
+    if (req.path.indexOf("/api/") !== -1) {
+        res.status(401).json({ error: "unauthorized" });
+        return;
+    }
+    res.redirect("/dashboard/login");
+}
+
+// ----------------------------------------------------------------------------
+// Routes publiques (login) - enregistrees AVANT le middleware d'auth pour
+// rester accessibles sans session valide.
+// ----------------------------------------------------------------------------
+app.get("/dashboard/login", function (req, res) {
+    res.sendFile(path.join(__dirname, "login.html"));
+});
+
+app.post("/dashboard/api/login", function (req, res) {
+    var ip = req.ip || "unknown";
+
+    if (isLockedOut(ip)) {
+        res.status(429).json({ error: "too_many_attempts" });
+        return;
+    }
+
+    var body = req.body || {};
+    var username = String(body.username || "");
+    var password = String(body.password || "");
+
+    if (authConfig.password === null) {
+        res.status(500).json({ error: "auth_not_configured" });
+        return;
+    }
+
+    var userOk = safeCompare(username, authConfig.user);
+    var passOk = safeCompare(password, authConfig.password);
+
+    if (userOk && passOk) {
+        clearAttempts(ip);
+        req.session.authenticated = true;
+        req.session.username = username;
+        res.json({ success: true });
+    } else {
+        registerFailedAttempt(ip);
+        res.status(401).json({ error: "invalid_credentials" });
+    }
+});
+
+app.post("/dashboard/api/logout", function (req, res) {
+    req.session.destroy(function () {
+        res.json({ success: true });
+    });
+});
+
+// ----------------------------------------------------------------------------
+// A partir d'ici, TOUTE requete /dashboard/* exige une session valide.
+// ----------------------------------------------------------------------------
+app.use(authRequired);
+
+app.get(["/dashboard", "/dashboard/"], function (req, res) {
+    res.sendFile(path.join(__dirname, "index.html"));
+});
+
+// ----------------------------------------------------------------------------
+// Collecte des metriques systeme (reprise de la logique existante).
+// ----------------------------------------------------------------------------
 function getCpuUsagePercent(callback) {
     var start = os.cpus();
 
@@ -617,24 +901,85 @@ function getWebStatus(callback) {
     });
 }
 
-setInterval(function () {
-    getCpuUsagePercent(function (cpu) {
-        getDiskUsagePercent(function (disk) {
-            getWebStatus(function (webStatus) {
-                var payload = {
-                    timestamp: new Date().toISOString(),
-                    cpu: cpu,
-                    ram: getRamUsagePercent(),
-                    disk: disk,
-                    webStatus: webStatus,
-                    hostname: os.hostname()
-                };
-                io.emit("metrics", payload);
-            });
-        });
-    });
-}, 3000);
+// ----------------------------------------------------------------------------
+// Analyse en direct des logs Nginx : codes HTTP, top endpoints, top IPs,
+// latence applicative ($request_time, capture "rt=X.XXX" en fin de ligne).
+// Compteurs en memoire, reinitialises a chaque redemarrage du process
+// (compromis acceptable pour un outil interne sans base de donnees dediee).
+// ----------------------------------------------------------------------------
+var statusCodeCounts = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 };
+var endpointCounts = {};
+var ipCounts = {};
+var latencySamples = [];
+var requestsToday = 0;
+var requestsTodayDate = new Date().toISOString().slice(0, 10);
+var MAX_LATENCY_SAMPLES = 1000;
 
+// Regex du format de log "blockhash" defini dans nginx.conf :
+// IP - user [date] "METHODE /chemin PROTO" STATUT TAILLE "referer" "agent" rt=TEMPS
+var LOG_LINE_REGEX = /^(\S+) \S+ \S+ \[[^\]]+\] "(\S+) (\S+) [^"]*" (\d{3}) \d+ "[^"]*" "[^"]*" rt=([0-9.]+|-)/;
+
+function recordLogLine(line) {
+    var match = LOG_LINE_REGEX.exec(line);
+    if (!match) {
+        return;
+    }
+
+    var ip = match[1];
+    var requestPath = match[3];
+    var status = match[4];
+    var rt = match[5];
+
+    var today = new Date().toISOString().slice(0, 10);
+    if (today !== requestsTodayDate) {
+        requestsTodayDate = today;
+        requestsToday = 0;
+        endpointCounts = {};
+        ipCounts = {};
+        statusCodeCounts = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0, other: 0 };
+    }
+    requestsToday += 1;
+
+    var statusClass = status.charAt(0) + "xx";
+    if (statusCodeCounts.hasOwnProperty(statusClass)) {
+        statusCodeCounts[statusClass] += 1;
+    } else {
+        statusCodeCounts.other += 1;
+    }
+
+    endpointCounts[requestPath] = (endpointCounts[requestPath] || 0) + 1;
+    ipCounts[ip] = (ipCounts[ip] || 0) + 1;
+
+    if (rt !== "-") {
+        var rtMs = parseFloat(rt) * 1000;
+        if (!isNaN(rtMs)) {
+            latencySamples.push(rtMs);
+            if (latencySamples.length > MAX_LATENCY_SAMPLES) {
+                latencySamples.shift();
+            }
+        }
+    }
+}
+
+function topEntries(counterObject, limit) {
+    var entries = Object.keys(counterObject).map(function (key) {
+        return { key: key, count: counterObject[key] };
+    });
+    entries.sort(function (a, b) { return b.count - a.count; });
+    return entries.slice(0, limit);
+}
+
+function percentile(sortedArray, p) {
+    if (sortedArray.length === 0) {
+        return 0;
+    }
+    var idx = Math.min(sortedArray.length - 1, Math.floor((p / 100) * sortedArray.length));
+    return sortedArray[idx];
+}
+
+// ----------------------------------------------------------------------------
+// Flux de logs Nginx : diffusion aux clients (terminal live) + analyse.
+// ----------------------------------------------------------------------------
 function startLogStream() {
     if (!fs.existsSync(NGINX_ACCESS_LOG)) {
         console.log("Log Nginx introuvable, nouvelle tentative dans 5s...");
@@ -649,18 +994,298 @@ function startLogStream() {
         for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim();
             if (line.length > 0) {
+                recordLogLine(line);
                 io.emit("logline", line);
             }
         }
     });
 
     tail.on("error", function (err) {
-        console.log("Erreur tail -F : " + err.message);
+        console.log("Erreur tail -F (access.log) : " + err.message);
     });
 }
 
+// ----------------------------------------------------------------------------
+// Flux d'incidents : suit /var/log/blockhash-incidents.log alimente par
+// monitor.sh, persiste chaque nouvel incident et notifie les clients
+// connectes en direct (notification "toast").
+// ----------------------------------------------------------------------------
+function persistIncident(timestamp, message) {
+    try {
+        var entry = JSON.stringify({ t: timestamp, message: message }) + "\n";
+        fs.appendFileSync(INCIDENTS_HISTORY_FILE, entry);
+    } catch (e) {
+        console.log("Impossible de persister l'incident : " + e.message);
+    }
+}
+
+function startIncidentStream() {
+    // Le fichier peut ne pas encore exister au tout premier demarrage : on
+    // s'assure de sa presence avant de le suivre.
+    try {
+        fs.closeSync(fs.openSync(INCIDENTS_LOG, "a"));
+    } catch (e) {
+        console.log("Impossible de creer " + INCIDENTS_LOG + " : " + e.message);
+    }
+
+    var tail = child_process.spawn("tail", ["-F", "-n", "0", INCIDENTS_LOG]);
+
+    tail.stdout.on("data", function (data) {
+        var lines = data.toString().split("\n");
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.length === 0) {
+                continue;
+            }
+            var sepIdx = line.indexOf("|");
+            var timestamp = sepIdx !== -1 ? line.substring(0, sepIdx) : new Date().toISOString();
+            var message = sepIdx !== -1 ? line.substring(sepIdx + 1) : line;
+
+            persistIncident(timestamp, message);
+            io.emit("incident", { t: timestamp, message: message });
+        }
+    });
+
+    tail.on("error", function (err) {
+        console.log("Erreur tail -F (incidents.log) : " + err.message);
+    });
+}
+
+// ----------------------------------------------------------------------------
+// Boucle de diffusion des metriques systeme (3s) + persistance historique
+// (1 point par minute dans metrics-history.jsonl).
+// ----------------------------------------------------------------------------
+var lastMetricsSnapshot = null;
+var ticksSinceLastPersist = 0;
+var PERSIST_EVERY_N_TICKS = 20; // 20 x 3s = 60s
+
+function appendMetricsHistory(snapshot) {
+    try {
+        var entry = JSON.stringify(snapshot) + "\n";
+        fs.appendFileSync(METRICS_HISTORY_FILE, entry);
+    } catch (e) {
+        console.log("Impossible de persister les metriques : " + e.message);
+        return;
+    }
+
+    ticksSinceLastPersist = 0;
+
+    // Purge legere : toutes les ~100 ecritures, on verifie la taille du
+    // fichier et on le tronque si necessaire pour eviter une croissance
+    // illimitee (retention ciblee : ~7 jours a 1 point/minute).
+    if (Math.random() < 0.01) {
+        try {
+            var lines = fs.readFileSync(METRICS_HISTORY_FILE, "utf8").split("\n").filter(Boolean);
+            if (lines.length > MAX_HISTORY_LINES) {
+                var trimmed = lines.slice(lines.length - MAX_HISTORY_LINES).join("\n") + "\n";
+                fs.writeFileSync(METRICS_HISTORY_FILE, trimmed);
+            }
+        } catch (e) {
+            console.log("Purge de l'historique impossible : " + e.message);
+        }
+    }
+}
+
+setInterval(function () {
+    getCpuUsagePercent(function (cpu) {
+        getDiskUsagePercent(function (disk) {
+            getWebStatus(function (webStatus) {
+                var payload = {
+                    timestamp: new Date().toISOString(),
+                    cpu: cpu,
+                    ram: getRamUsagePercent(),
+                    disk: disk,
+                    webStatus: webStatus,
+                    hostname: os.hostname()
+                };
+
+                lastMetricsSnapshot = payload;
+                io.emit("metrics", payload);
+
+                ticksSinceLastPersist += 1;
+                if (ticksSinceLastPersist >= PERSIST_EVERY_N_TICKS) {
+                    appendMetricsHistory({
+                        t: payload.timestamp,
+                        cpu: payload.cpu,
+                        ram: payload.ram,
+                        disk: payload.disk,
+                        webStatus: payload.webStatus
+                    });
+                }
+            });
+        });
+    });
+}, 3000);
+
+// ----------------------------------------------------------------------------
+// API REST - toutes protegees par authRequired (deja applique plus haut).
+// ----------------------------------------------------------------------------
+
+// Historique des metriques pour le graphique multi-plages.
+app.get("/dashboard/api/metrics-history", function (req, res) {
+    var range = req.query.range || "1h";
+    var rangeMs = { "1h": 3600000, "6h": 21600000, "24h": 86400000, "7d": 604800000 }[range] || 3600000;
+    var since = Date.now() - rangeMs;
+
+    var points = [];
+    try {
+        var lines = fs.readFileSync(METRICS_HISTORY_FILE, "utf8").split("\n").filter(Boolean);
+        for (var i = 0; i < lines.length; i++) {
+            try {
+                var obj = JSON.parse(lines[i]);
+                if (new Date(obj.t).getTime() >= since) {
+                    points.push(obj);
+                }
+            } catch (e) {
+                // Ligne corrompue : ignoree silencieusement.
+            }
+        }
+    } catch (e) {
+        // Pas encore d'historique disponible (VM tout juste demarree).
+    }
+
+    // Sous-echantillonnage si trop de points pour un rendu de graphique
+    // fluide (au-dela de ~300 points, on garde 1 point sur N).
+    var maxPoints = 300;
+    if (points.length > maxPoints) {
+        var step = Math.ceil(points.length / maxPoints);
+        points = points.filter(function (_, idx) { return idx % step === 0; });
+    }
+
+    res.json({ range: range, points: points });
+});
+
+// KPIs consolides : uptime 24h/7j, latence, requetes du jour, incidents actifs.
+app.get("/dashboard/api/kpis", function (req, res) {
+    var now = Date.now();
+    var uptime = { "24h": null, "7d": null };
+
+    try {
+        var lines = fs.readFileSync(METRICS_HISTORY_FILE, "utf8").split("\n").filter(Boolean);
+        ["24h", "7d"].forEach(function (rangeKey) {
+            var rangeMs = rangeKey === "24h" ? 86400000 : 604800000;
+            var since = now - rangeMs;
+            var total = 0;
+            var up = 0;
+            for (var i = 0; i < lines.length; i++) {
+                try {
+                    var obj = JSON.parse(lines[i]);
+                    if (new Date(obj.t).getTime() >= since) {
+                        total += 1;
+                        if (obj.webStatus !== "000") {
+                            up += 1;
+                        }
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+            uptime[rangeKey] = total > 0 ? Math.round((up / total) * 10000) / 100 : null;
+        });
+    } catch (e) {
+        // Pas encore d'historique.
+    }
+
+    var sortedLatencies = latencySamples.slice().sort(function (a, b) { return a - b; });
+    var avgLatency = sortedLatencies.length > 0
+        ? Math.round(sortedLatencies.reduce(function (a, b) { return a + b; }, 0) / sortedLatencies.length)
+        : null;
+    var p95Latency = sortedLatencies.length > 0 ? Math.round(percentile(sortedLatencies, 95)) : null;
+
+    var incidentsToday = 0;
+    try {
+        var incidentLines = fs.readFileSync(INCIDENTS_HISTORY_FILE, "utf8").split("\n").filter(Boolean);
+        var since24h = now - 86400000;
+        incidentLines.forEach(function (line) {
+            try {
+                var obj = JSON.parse(line);
+                if (new Date(obj.t).getTime() >= since24h) {
+                    incidentsToday += 1;
+                }
+            } catch (e) {
+                // ignore
+            }
+        });
+    } catch (e) {
+        // Pas encore d'incidents.
+    }
+
+    res.json({
+        uptime24h: uptime["24h"],
+        uptime7d: uptime["7d"],
+        avgLatencyMs: avgLatency,
+        p95LatencyMs: p95Latency,
+        requestsToday: requestsToday,
+        incidentsLast24h: incidentsToday
+    });
+});
+
+app.get("/dashboard/api/status-codes", function (req, res) {
+    res.json(statusCodeCounts);
+});
+
+app.get("/dashboard/api/top-endpoints", function (req, res) {
+    res.json(topEntries(endpointCounts, 10));
+});
+
+app.get("/dashboard/api/top-ips", function (req, res) {
+    res.json(topEntries(ipCounts, 10));
+});
+
+app.get("/dashboard/api/incidents", function (req, res) {
+    var incidents = [];
+    try {
+        var lines = fs.readFileSync(INCIDENTS_HISTORY_FILE, "utf8").split("\n").filter(Boolean);
+        incidents = lines.slice(-50).map(function (line) {
+            try {
+                return JSON.parse(line);
+            } catch (e) {
+                return null;
+            }
+        }).filter(Boolean).reverse();
+    } catch (e) {
+        // Pas encore d'incidents enregistres.
+    }
+    res.json(incidents);
+});
+
+app.get("/dashboard/api/services", function (req, res) {
+    var services = ["nginx", "php8.3-fpm", "mysql"];
+    var results = { dashboard: "active" };
+    var pending = services.length;
+
+    services.forEach(function (svc) {
+        child_process.exec("systemctl is-active " + svc, function (err, stdout) {
+            results[svc] = stdout.trim() === "active" ? "active" : "inactive";
+            pending -= 1;
+            if (pending === 0) {
+                res.json(results);
+            }
+        });
+    });
+});
+
+// ----------------------------------------------------------------------------
+// Socket.io : partage du middleware de session Express afin de n'accepter
+// que les connexions WebSocket provenant d'un navigateur authentifie.
+// ----------------------------------------------------------------------------
+io.engine.use(sessionMiddleware);
+
+io.use(function (socket, next) {
+    var sess = socket.request.session;
+    if (sess && sess.authenticated) {
+        next();
+        return;
+    }
+    next(new Error("unauthorized"));
+});
+
 io.on("connection", function (socket) {
     console.log("Client dashboard connecte : " + socket.id);
+
+    if (lastMetricsSnapshot) {
+        socket.emit("metrics", lastMetricsSnapshot);
+    }
 
     socket.on("disconnect", function () {
         console.log("Client dashboard deconnecte : " + socket.id);
@@ -674,6 +1299,7 @@ io.on("connection", function (socket) {
 });
 
 startLogStream();
+startIncidentStream();
 
 server.listen(PORT, function () {
     console.log("Serveur dashboard BlockHash demarre sur le port " + PORT);
@@ -683,29 +1309,28 @@ SERVER_EOF
 cd /var/www/html/dashboard
 npm install --production
 
+# Redemarre proprement si une precedente instance pm2 existe deja
+# (rejouabilite du script en cas de re-provisioning manuel).
+pm2 delete blockhash-dashboard > /dev/null 2>&1 || true
 pm2 start server.js --name blockhash-dashboard
 pm2 startup systemd -u root --hp /root > /tmp/pm2-startup.log 2>&1 || true
 bash /tmp/pm2-startup.log > /dev/null 2>&1 || true
 pm2 save
 
 ##############################################################################
-# 9. FRONTEND DASHBOARD (dashboard/index.html) — Dark Glassmorphism Premium
+# 10. FRONTEND DASHBOARD ENTREPRISE (login.html + index.html)
 ##############################################################################
-echo ">>> [9/9] Déploiement du frontend dashboard/index.html..."
+echo ">>> [10/10] Déploiement du frontend dashboard (login.html + index.html)..."
 
-cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
+cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
 <!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BlockHash — Dashboard de Monitoring</title>
-
+<title>BlockHash - Connexion</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-
 <style>
     body {
         background: radial-gradient(circle at top left, #0f172a 0%, #020617 60%, #000000 100%);
@@ -721,6 +1346,134 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
         border-radius: 1rem;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
     }
+</style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-6">
+
+    <div class="glass-card w-full max-w-sm p-8">
+        <div class="flex flex-col items-center mb-6">
+            <div class="w-12 h-12 rounded-xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center mb-3">
+                <i data-lucide="shield-check" class="w-6 h-6 text-indigo-400"></i>
+            </div>
+            <h1 class="text-xl font-bold text-white">BlockHash Ops</h1>
+            <p class="text-slate-400 text-sm mt-1">Connexion au dashboard de supervision</p>
+        </div>
+
+        <form id="login-form" class="flex flex-col gap-4">
+            <div>
+                <label class="text-xs text-slate-400 mb-1 block">Utilisateur</label>
+                <input type="text" id="username" autocomplete="username" required
+                    class="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-400" />
+            </div>
+            <div>
+                <label class="text-xs text-slate-400 mb-1 block">Mot de passe</label>
+                <input type="password" id="password" autocomplete="current-password" required
+                    class="w-full bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-400" />
+            </div>
+
+            <p id="login-error" class="text-xs text-rose-400 hidden"></p>
+
+            <button type="submit"
+                class="w-full bg-indigo-500/90 hover:bg-indigo-500 transition rounded-lg py-2.5 text-sm font-semibold text-white flex items-center justify-center gap-2">
+                <i data-lucide="log-in" class="w-4 h-4"></i>
+                Se connecter
+            </button>
+        </form>
+    </div>
+
+<script>
+    lucide.createIcons();
+
+    var form = document.getElementById("login-form");
+    var errorEl = document.getElementById("login-error");
+
+    form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        errorEl.classList.add("hidden");
+
+        var username = document.getElementById("username").value;
+        var password = document.getElementById("password").value;
+
+        fetch("/dashboard/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: username, password: password })
+        })
+            .then(function (response) {
+                if (response.ok) {
+                    window.location.href = "/dashboard/";
+                    return;
+                }
+                return response.json().then(function (data) {
+                    var messages = {
+                        invalid_credentials: "Identifiants incorrects.",
+                        too_many_attempts: "Trop de tentatives - reessayez dans quelques minutes.",
+                        auth_not_configured: "Authentification non configuree cote serveur."
+                    };
+                    errorEl.textContent = messages[data.error] || "Erreur de connexion.";
+                    errorEl.classList.remove("hidden");
+                });
+            })
+            .catch(function () {
+                errorEl.textContent = "Erreur reseau - reessayez.";
+                errorEl.classList.remove("hidden");
+            });
+    });
+</script>
+</body>
+</html>
+LOGIN_EOF
+
+cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BlockHash - Dashboard de Monitoring</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+<style>
+    :root {
+        --bg-grad-1: #0f172a;
+        --bg-grad-2: #020617;
+        --bg-grad-3: #000000;
+        --text-main: #e2e8f0;
+        --text-muted: #94a3b8;
+        --card-bg: rgba(255, 255, 255, 0.05);
+        --card-border: rgba(255, 255, 255, 0.10);
+        --table-border: rgba(255, 255, 255, 0.08);
+    }
+    html[data-theme="light"] {
+        --bg-grad-1: #f1f5f9;
+        --bg-grad-2: #e2e8f0;
+        --bg-grad-3: #ffffff;
+        --text-main: #0f172a;
+        --text-muted: #475569;
+        --card-bg: rgba(255, 255, 255, 0.65);
+        --card-border: rgba(15, 23, 42, 0.10);
+        --table-border: rgba(15, 23, 42, 0.08);
+    }
+    body {
+        background: radial-gradient(circle at top left, var(--bg-grad-1) 0%, var(--bg-grad-2) 60%, var(--bg-grad-3) 100%);
+        min-height: 100vh;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        color: var(--text-main);
+        transition: background 0.2s ease, color 0.2s ease;
+    }
+    .glass-card {
+        background: var(--card-bg);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border: 1px solid var(--card-border);
+        border-radius: 1rem;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+    }
+    .text-muted { color: var(--text-muted); }
     .status-dot {
         width: 10px;
         height: 10px;
@@ -729,7 +1482,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
         box-shadow: 0 0 8px currentColor;
     }
     #log-terminal {
-        background: rgba(0, 0, 0, 0.55);
+        background: rgba(0, 0, 0, 0.45);
         font-family: 'Courier New', monospace;
         font-size: 0.78rem;
         line-height: 1.35rem;
@@ -737,38 +1490,79 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
     }
     #log-terminal::-webkit-scrollbar { width: 8px; }
     #log-terminal::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+    table.data-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    table.data-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--table-border); }
+    table.data-table td { padding: 6px 8px; border-bottom: 1px solid var(--table-border); }
+    .range-btn { padding: 4px 10px; border-radius: 9999px; font-size: 0.75rem; border: 1px solid var(--card-border); color: var(--text-muted); }
+    .range-btn.active { background: rgba(99,102,241,0.25); color: #a5b4fc; border-color: rgba(129,140,248,0.5); }
+    .toast { animation: toast-in 0.25s ease; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
 <body class="p-6 md:p-10">
 
     <header class="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
         <div>
-            <h1 class="text-3xl font-bold text-white tracking-tight">BlockHash <span class="text-indigo-400">Ops</span></h1>
-            <p class="text-slate-400 text-sm mt-1">Dashboard de monitoring temps reel — Infrastructure Azure</p>
+            <h1 class="text-3xl font-bold tracking-tight">BlockHash <span class="text-indigo-400">Ops</span></h1>
+            <p class="text-muted text-sm mt-1">Dashboard de monitoring - Infrastructure Azure</p>
         </div>
         <div class="flex items-center gap-3">
             <span id="connection-indicator" class="status-dot bg-slate-500 text-slate-500"></span>
-            <span id="connection-label" class="text-sm text-slate-400">Connexion...</span>
+            <span id="connection-label" class="text-sm text-muted">Connexion...</span>
+            <button id="btn-theme-toggle" class="glass-card px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5">
+                <i data-lucide="moon" class="w-4 h-4"></i>
+            </button>
+            <button id="btn-logout" class="glass-card px-3 py-1.5 rounded-lg text-sm flex items-center gap-1.5 text-rose-400">
+                <i data-lucide="log-out" class="w-4 h-4"></i>
+                Deconnexion
+            </button>
         </div>
     </header>
 
-    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+    <!-- ==================== TOASTS ==================== -->
+    <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80"></div>
 
+    <!-- ==================== KPIs ==================== -->
+    <section class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+        <div class="glass-card p-4">
+            <p class="text-muted text-xs">Disponibilite 24h</p>
+            <p id="kpi-uptime-24h" class="text-xl font-bold mt-1">--</p>
+        </div>
+        <div class="glass-card p-4">
+            <p class="text-muted text-xs">Disponibilite 7j</p>
+            <p id="kpi-uptime-7d" class="text-xl font-bold mt-1">--</p>
+        </div>
+        <div class="glass-card p-4">
+            <p class="text-muted text-xs">Latence moy. / p95</p>
+            <p id="kpi-latency" class="text-xl font-bold mt-1">--</p>
+        </div>
+        <div class="glass-card p-4">
+            <p class="text-muted text-xs">Requetes aujourd'hui</p>
+            <p id="kpi-requests" class="text-xl font-bold mt-1">--</p>
+        </div>
+        <div class="glass-card p-4">
+            <p class="text-muted text-xs">Incidents (24h)</p>
+            <p id="kpi-incidents" class="text-xl font-bold mt-1">--</p>
+        </div>
+    </section>
+
+    <!-- ==================== CARTES TEMPS REEL ==================== -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
         <div class="glass-card p-5">
             <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">Statut Web</span>
+                <span class="text-muted text-sm">Statut Web</span>
                 <i data-lucide="globe" class="w-5 h-5 text-indigo-400"></i>
             </div>
-            <p id="web-status-value" class="text-2xl font-bold mt-3 text-white">--</p>
-            <p id="web-status-sub" class="text-xs text-slate-500 mt-1">En attente de donnees</p>
+            <p id="web-status-value" class="text-2xl font-bold mt-3">--</p>
+            <p id="web-status-sub" class="text-xs text-muted mt-1">En attente de donnees</p>
         </div>
 
         <div class="glass-card p-5">
             <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">CPU</span>
+                <span class="text-muted text-sm">CPU</span>
                 <i data-lucide="cpu" class="w-5 h-5 text-emerald-400"></i>
             </div>
-            <p id="cpu-value" class="text-2xl font-bold mt-3 text-white">--%</p>
+            <p id="cpu-value" class="text-2xl font-bold mt-3">--%</p>
             <div class="w-full bg-slate-700/40 rounded-full h-1.5 mt-3">
                 <div id="cpu-bar" class="bg-emerald-400 h-1.5 rounded-full" style="width:0%"></div>
             </div>
@@ -776,10 +1570,10 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
 
         <div class="glass-card p-5">
             <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">RAM</span>
+                <span class="text-muted text-sm">RAM</span>
                 <i data-lucide="memory-stick" class="w-5 h-5 text-amber-400"></i>
             </div>
-            <p id="ram-value" class="text-2xl font-bold mt-3 text-white">--%</p>
+            <p id="ram-value" class="text-2xl font-bold mt-3">--%</p>
             <div class="w-full bg-slate-700/40 rounded-full h-1.5 mt-3">
                 <div id="ram-bar" class="bg-amber-400 h-1.5 rounded-full" style="width:0%"></div>
             </div>
@@ -787,54 +1581,149 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
 
         <div class="glass-card p-5">
             <div class="flex items-center justify-between">
-                <span class="text-slate-400 text-sm">Disque</span>
+                <span class="text-muted text-sm">Disque</span>
                 <i data-lucide="hard-drive" class="w-5 h-5 text-rose-400"></i>
             </div>
-            <p id="disk-value" class="text-2xl font-bold mt-3 text-white">--%</p>
+            <p id="disk-value" class="text-2xl font-bold mt-3">--%</p>
             <div class="w-full bg-slate-700/40 rounded-full h-1.5 mt-3">
                 <div id="disk-bar" class="bg-rose-400 h-1.5 rounded-full" style="width:0%"></div>
             </div>
         </div>
     </section>
 
-    <section class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-8">
-        <div class="glass-card p-5 lg:col-span-2">
-            <h2 class="text-white font-semibold mb-3">Evolution CPU (temps reel)</h2>
-            <canvas id="cpu-chart" height="90"></canvas>
+    <!-- ==================== HISTORIQUE (plage temporelle) ==================== -->
+    <section class="glass-card p-5 mb-6">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 class="font-semibold">Historique CPU / RAM / Disque</h2>
+            <div class="flex gap-2">
+                <button class="range-btn" data-range="1h">1h</button>
+                <button class="range-btn" data-range="6h">6h</button>
+                <button class="range-btn active" data-range="24h">24h</button>
+                <button class="range-btn" data-range="7d">7j</button>
+            </div>
+        </div>
+        <canvas id="history-chart" height="80"></canvas>
+    </section>
+
+    <!-- ==================== CODES HTTP + SANTE DES SERVICES ==================== -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
+        <div class="glass-card p-5">
+            <h2 class="font-semibold mb-3">Repartition des codes HTTP</h2>
+            <canvas id="status-chart" height="180"></canvas>
         </div>
 
-        <div class="glass-card p-5 flex flex-col gap-4">
-            <h2 class="text-white font-semibold">Actions</h2>
+        <div class="glass-card p-5 lg:col-span-2">
+            <h2 class="font-semibold mb-3">Sante des services</h2>
+            <div id="services-panel" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+
+            <h2 class="font-semibold mt-5 mb-3">Actions</h2>
             <button id="btn-test-5xx"
-                class="w-full flex items-center justify-center gap-2 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 rounded-lg py-2.5 transition">
+                class="flex items-center justify-center gap-2 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 rounded-lg py-2 px-4 text-sm">
                 <i data-lucide="zap" class="w-4 h-4"></i>
                 Lancer un test d'erreur 5xx
             </button>
-            <p id="test-5xx-result" class="text-xs text-slate-500"></p>
-
-            <div class="mt-auto text-xs text-slate-500">
-                <p>Hote : <span id="hostname-value">--</span></p>
-                <p>Derniere mise a jour : <span id="last-update-value">--</span></p>
-            </div>
+            <p id="test-5xx-result" class="text-xs text-muted mt-2"></p>
         </div>
     </section>
 
-    <section class="glass-card p-5">
-        <div class="flex items-center justify-between mb-3">
-            <h2 class="text-white font-semibold flex items-center gap-2">
-                <i data-lucide="terminal" class="w-4 h-4"></i>
-                Logs Nginx en direct
+    <!-- ==================== TOP ENDPOINTS / TOP IPs ==================== -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+        <div class="glass-card p-5">
+            <h2 class="font-semibold mb-3">Top endpoints</h2>
+            <table class="data-table">
+                <thead><tr><th>Chemin</th><th>Requetes</th></tr></thead>
+                <tbody id="top-endpoints-body"></tbody>
+            </table>
+        </div>
+        <div class="glass-card p-5">
+            <h2 class="font-semibold mb-3">Top adresses IP</h2>
+            <table class="data-table">
+                <thead><tr><th>IP</th><th>Requetes</th></tr></thead>
+                <tbody id="top-ips-body"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- ==================== INCIDENTS + LOGS ==================== -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+        <div class="glass-card p-5">
+            <h2 class="font-semibold mb-3 flex items-center gap-2">
+                <i data-lucide="siren" class="w-4 h-4"></i>
+                Journal d'incidents
             </h2>
-            <button id="btn-clear-logs" class="text-xs text-slate-400 hover:text-white transition">Effacer</button>
+            <div id="incidents-list" class="flex flex-col gap-2 max-h-64 overflow-y-auto text-sm"></div>
         </div>
-        <div id="log-terminal" class="rounded-lg p-4 h-64"></div>
+
+        <div class="glass-card p-5">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="font-semibold flex items-center gap-2">
+                    <i data-lucide="terminal" class="w-4 h-4"></i>
+                    Logs Nginx en direct
+                </h2>
+                <button id="btn-clear-logs" class="text-xs text-muted hover:underline">Effacer</button>
+            </div>
+            <div id="log-terminal" class="rounded-lg p-4 h-64"></div>
+        </div>
     </section>
+
+    <footer class="text-center text-xs text-muted pt-4 pb-8">
+        Hote : <span id="hostname-value">--</span> · Derniere mise a jour : <span id="last-update-value">--</span>
+    </footer>
 
 <script>
     lucide.createIcons();
 
-    var socket = io();
+    // ------------------------------------------------------------------
+    // Theme clair/sombre - persiste la preference dans localStorage
+    // (page servee par notre propre backend, pas une preview d'artefact).
+    // ------------------------------------------------------------------
+    var themeBtn = document.getElementById("btn-theme-toggle");
+    function applyTheme(theme) {
+        document.documentElement.setAttribute("data-theme", theme);
+        themeBtn.innerHTML = theme === "light"
+            ? '<i data-lucide="sun" class="w-4 h-4"></i>'
+            : '<i data-lucide="moon" class="w-4 h-4"></i>';
+        lucide.createIcons();
+    }
+    var savedTheme = "dark";
+    try { savedTheme = window.localStorage.getItem("blockhash-theme") || "dark"; } catch (e) {}
+    applyTheme(savedTheme);
 
+    themeBtn.addEventListener("click", function () {
+        var current = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+        applyTheme(current);
+        try { window.localStorage.setItem("blockhash-theme", current); } catch (e) {}
+    });
+
+    // ------------------------------------------------------------------
+    // Deconnexion
+    // ------------------------------------------------------------------
+    document.getElementById("btn-logout").addEventListener("click", function () {
+        fetch("/dashboard/api/logout", { method: "POST" }).then(function () {
+            window.location.href = "/dashboard/login";
+        });
+    });
+
+    // ------------------------------------------------------------------
+    // Toasts de notification (incidents en direct)
+    // ------------------------------------------------------------------
+    function showToast(message) {
+        var container = document.getElementById("toast-container");
+        var toast = document.createElement("div");
+        toast.className = "toast glass-card px-4 py-3 text-sm border-l-4 border-rose-400";
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(function () {
+            toast.style.opacity = "0";
+            toast.style.transition = "opacity 0.4s ease";
+            setTimeout(function () { toast.remove(); }, 400);
+        }, 8000);
+    }
+
+    // ------------------------------------------------------------------
+    // Connexion Socket.io
+    // ------------------------------------------------------------------
+    var socket = io();
     var connectionIndicator = document.getElementById("connection-indicator");
     var connectionLabel = document.getElementById("connection-label");
 
@@ -848,43 +1737,16 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
         connectionLabel.textContent = "Deconnecte";
     });
 
-    var maxPoints = 30;
-    var cpuLabels = [];
-    var cpuData = [];
-
-    var ctx = document.getElementById("cpu-chart").getContext("2d");
-    var cpuChart = new Chart(ctx, {
-        type: "line",
-        data: {
-            labels: cpuLabels,
-            datasets: [{
-                label: "CPU %",
-                data: cpuData,
-                borderColor: "#34d399",
-                backgroundColor: "rgba(52, 211, 153, 0.15)",
-                tension: 0.35,
-                fill: true,
-                pointRadius: 0
-            }]
-        },
-        options: {
-            responsive: true,
-            animation: false,
-            scales: {
-                y: { min: 0, max: 100, ticks: { color: "#94a3b8" }, grid: { color: "rgba(255,255,255,0.05)" } },
-                x: { ticks: { color: "#64748b", maxTicksLimit: 6 }, grid: { display: false } }
-            },
-            plugins: { legend: { display: false } }
-        }
+    socket.on("connect_error", function () {
+        // Session expiree ou invalide : renvoi vers la page de connexion.
+        window.location.href = "/dashboard/login";
     });
 
     socket.on("metrics", function (data) {
         document.getElementById("cpu-value").textContent = data.cpu + "%";
         document.getElementById("cpu-bar").style.width = data.cpu + "%";
-
         document.getElementById("ram-value").textContent = data.ram + "%";
         document.getElementById("ram-bar").style.width = data.ram + "%";
-
         document.getElementById("disk-value").textContent = data.disk + "%";
         document.getElementById("disk-bar").style.width = data.disk + "%";
 
@@ -905,38 +1767,34 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
 
         document.getElementById("hostname-value").textContent = data.hostname;
         document.getElementById("last-update-value").textContent = new Date(data.timestamp).toLocaleTimeString();
-
-        var label = new Date(data.timestamp).toLocaleTimeString();
-        cpuLabels.push(label);
-        cpuData.push(data.cpu);
-        if (cpuLabels.length > maxPoints) {
-            cpuLabels.shift();
-            cpuData.shift();
-        }
-        cpuChart.update();
     });
 
+    socket.on("incident", function (incident) {
+        showToast(incident.message);
+        prependIncident(incident);
+        refreshKpis();
+    });
+
+    // ------------------------------------------------------------------
+    // Terminal de logs en direct
+    // ------------------------------------------------------------------
     var logTerminal = document.getElementById("log-terminal");
     var maxLogLines = 300;
 
     socket.on("logline", function (line) {
         var lineEl = document.createElement("div");
-
         if (/\s5\d{2}\s/.test(line)) {
             lineEl.className = "text-rose-400";
         } else if (/\s4\d{2}\s/.test(line)) {
             lineEl.className = "text-amber-400";
         } else {
-            lineEl.className = "text-slate-400";
+            lineEl.className = "text-muted";
         }
-
         lineEl.textContent = line;
         logTerminal.appendChild(lineEl);
-
         while (logTerminal.children.length > maxLogLines) {
             logTerminal.removeChild(logTerminal.firstChild);
         }
-
         logTerminal.scrollTop = logTerminal.scrollHeight;
     });
 
@@ -952,15 +1810,234 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
     socket.on("test_5xx_result", function (result) {
         var el = document.getElementById("test-5xx-result");
         el.textContent = result.success
-            ? "Test termine avec succes : verifiez vos canaux d'alerte."
+            ? "Test termine avec succes : verifiez le journal d'incidents ci-dessus."
             : "Le test a rencontre une erreur.";
     });
+
+    // ------------------------------------------------------------------
+    // Graphique historique (plage selectionnable)
+    // ------------------------------------------------------------------
+    var historyCtx = document.getElementById("history-chart").getContext("2d");
+    var historyChart = new Chart(historyCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                { label: "CPU %", data: [], borderColor: "#34d399", backgroundColor: "transparent", tension: 0.3, pointRadius: 0 },
+                { label: "RAM %", data: [], borderColor: "#fbbf24", backgroundColor: "transparent", tension: 0.3, pointRadius: 0 },
+                { label: "Disque %", data: [], borderColor: "#fb7185", backgroundColor: "transparent", tension: 0.3, pointRadius: 0 }
+            ]
+        },
+        options: {
+            responsive: true,
+            animation: false,
+            scales: {
+                y: { min: 0, max: 100, ticks: { color: "#94a3b8" }, grid: { color: "rgba(148,163,184,0.1)" } },
+                x: { ticks: { color: "#64748b", maxTicksLimit: 8 }, grid: { display: false } }
+            },
+            plugins: { legend: { labels: { color: "#94a3b8" } } }
+        }
+    });
+
+    function loadHistory(range) {
+        fetch("/dashboard/api/metrics-history?range=" + range)
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var labels = data.points.map(function (p) {
+                    var d = new Date(p.t);
+                    return range === "7d" ? (d.toLocaleDateString() + " " + d.toLocaleTimeString().slice(0, 5)) : d.toLocaleTimeString();
+                });
+                historyChart.data.labels = labels;
+                historyChart.data.datasets[0].data = data.points.map(function (p) { return p.cpu; });
+                historyChart.data.datasets[1].data = data.points.map(function (p) { return p.ram; });
+                historyChart.data.datasets[2].data = data.points.map(function (p) { return p.disk; });
+                historyChart.update();
+            })
+            .catch(function () {});
+    }
+
+    var rangeButtons = document.querySelectorAll(".range-btn");
+    rangeButtons.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            rangeButtons.forEach(function (b) { b.classList.remove("active"); });
+            btn.classList.add("active");
+            loadHistory(btn.getAttribute("data-range"));
+        });
+    });
+    loadHistory("24h");
+
+    // ------------------------------------------------------------------
+    // Donut des codes HTTP
+    // ------------------------------------------------------------------
+    var statusCtx = document.getElementById("status-chart").getContext("2d");
+    var statusChart = new Chart(statusCtx, {
+        type: "doughnut",
+        data: {
+            labels: ["2xx", "3xx", "4xx", "5xx", "Autre"],
+            datasets: [{
+                data: [0, 0, 0, 0, 0],
+                backgroundColor: ["#34d399", "#60a5fa", "#fbbf24", "#fb7185", "#94a3b8"]
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { position: "bottom", labels: { color: "#94a3b8" } } }
+        }
+    });
+
+    function loadStatusCodes() {
+        fetch("/dashboard/api/status-codes")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                statusChart.data.datasets[0].data = [data["2xx"], data["3xx"], data["4xx"], data["5xx"], data.other];
+                statusChart.update();
+            })
+            .catch(function () {});
+    }
+
+    // ------------------------------------------------------------------
+    // Top endpoints / Top IPs
+    // ------------------------------------------------------------------
+    function fillTable(bodyId, rows) {
+        var body = document.getElementById(bodyId);
+        body.innerHTML = "";
+        if (rows.length === 0) {
+            body.innerHTML = '<tr><td colspan="2" class="text-muted">Aucune donnee pour le moment</td></tr>';
+            return;
+        }
+        rows.forEach(function (row) {
+            var tr = document.createElement("tr");
+            var tdKey = document.createElement("td");
+            tdKey.textContent = row.key;
+            var tdCount = document.createElement("td");
+            tdCount.textContent = row.count;
+            tr.appendChild(tdKey);
+            tr.appendChild(tdCount);
+            body.appendChild(tr);
+        });
+    }
+
+    function loadTopLists() {
+        fetch("/dashboard/api/top-endpoints").then(function (r) { return r.json(); }).then(function (rows) {
+            fillTable("top-endpoints-body", rows);
+        }).catch(function () {});
+
+        fetch("/dashboard/api/top-ips").then(function (r) { return r.json(); }).then(function (rows) {
+            fillTable("top-ips-body", rows);
+        }).catch(function () {});
+    }
+
+    // ------------------------------------------------------------------
+    // Sante des services
+    // ------------------------------------------------------------------
+    var serviceLabels = { nginx: "Nginx", "php8.3-fpm": "PHP-FPM", mysql: "MySQL", dashboard: "Dashboard" };
+
+    function loadServices() {
+        fetch("/dashboard/api/services")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var panel = document.getElementById("services-panel");
+                panel.innerHTML = "";
+                Object.keys(serviceLabels).forEach(function (key) {
+                    var status = data[key] || "inconnu";
+                    var ok = status === "active";
+                    var card = document.createElement("div");
+                    card.className = "glass-card p-3 flex items-center gap-2";
+                    var dot = document.createElement("span");
+                    dot.className = "status-dot " + (ok ? "bg-emerald-400 text-emerald-400" : "bg-rose-500 text-rose-500");
+                    var label = document.createElement("span");
+                    label.className = "text-sm";
+                    label.textContent = serviceLabels[key];
+                    card.appendChild(dot);
+                    card.appendChild(label);
+                    panel.appendChild(card);
+                });
+            })
+            .catch(function () {});
+    }
+
+    // ------------------------------------------------------------------
+    // Journal d'incidents
+    // ------------------------------------------------------------------
+    function prependIncident(incident) {
+        var list = document.getElementById("incidents-list");
+        var empty = list.querySelector(".text-muted.italic");
+        if (empty) { empty.remove(); }
+
+        var row = document.createElement("div");
+        row.className = "glass-card px-3 py-2 border-l-2 border-rose-400";
+        var time = document.createElement("div");
+        time.className = "text-xs text-muted";
+        time.textContent = new Date(incident.t).toLocaleString();
+        var msg = document.createElement("div");
+        msg.textContent = incident.message;
+        row.appendChild(time);
+        row.appendChild(msg);
+        list.insertBefore(row, list.firstChild);
+    }
+
+    function loadIncidents() {
+        fetch("/dashboard/api/incidents")
+            .then(function (r) { return r.json(); })
+            .then(function (incidents) {
+                var list = document.getElementById("incidents-list");
+                list.innerHTML = "";
+                if (incidents.length === 0) {
+                    list.innerHTML = '<p class="text-muted italic">Aucun incident enregistre pour le moment.</p>';
+                    return;
+                }
+                incidents.forEach(prependIncident);
+            })
+            .catch(function () {});
+    }
+
+    // ------------------------------------------------------------------
+    // KPIs
+    // ------------------------------------------------------------------
+    function formatUptime(value) {
+        return value === null || value === undefined ? "--" : value + "%";
+    }
+
+    function refreshKpis() {
+        fetch("/dashboard/api/kpis")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                document.getElementById("kpi-uptime-24h").textContent = formatUptime(data.uptime24h);
+                document.getElementById("kpi-uptime-7d").textContent = formatUptime(data.uptime7d);
+                document.getElementById("kpi-latency").textContent =
+                    (data.avgLatencyMs !== null ? data.avgLatencyMs + "ms" : "--") +
+                    " / " + (data.p95LatencyMs !== null ? data.p95LatencyMs + "ms" : "--");
+                document.getElementById("kpi-requests").textContent = data.requestsToday;
+                document.getElementById("kpi-incidents").textContent = data.incidentsLast24h;
+            })
+            .catch(function () {});
+    }
+
+    // ------------------------------------------------------------------
+    // Rafraichissement periodique des blocs non temps-reel.
+    // ------------------------------------------------------------------
+    refreshKpis();
+    loadStatusCodes();
+    loadTopLists();
+    loadServices();
+    loadIncidents();
+
+    setInterval(refreshKpis, 30000);
+    setInterval(loadStatusCodes, 15000);
+    setInterval(loadTopLists, 20000);
+    setInterval(loadServices, 20000);
+    setInterval(function () {
+        var activeRange = document.querySelector(".range-btn.active");
+        loadHistory(activeRange ? activeRange.getAttribute("data-range") : "24h");
+    }, 60000);
 </script>
 </body>
 </html>
 HTML_EOF
 
 chown -R www-data:www-data /var/www/html/dashboard
+chown -R root:root /var/lib/blockhash
+chmod 750 /var/lib/blockhash
 
 echo ">>> [BlockHash] Provisioning terminé avec succès $(date)"
 exit 0

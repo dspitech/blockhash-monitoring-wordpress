@@ -83,6 +83,18 @@ resource "random_password" "mysql_admin_password" {
 }
 
 # ----------------------------------------------------------------------------
+# Génération dynamique du mot de passe administrateur du DASHBOARD DE
+# MONITORING (interface web protégée par authentification, voir
+# modules/vm/scripts/user_data.sh). Distinct du mot de passe MySQL afin de
+# ne jamais réutiliser un même secret pour deux usages différents.
+# ----------------------------------------------------------------------------
+resource "random_password" "dashboard_admin_password" {
+  length           = 20
+  special          = true
+  override_special = "!#%&*()-_=+"
+}
+
+# ----------------------------------------------------------------------------
 # Génération dynamique de la paire de clés SSH (RSA 4096) utilisée pour
 # l'authentification sur la VM Web. La clé privée est automatiquement
 # marquée "sensitive" par le provider TLS (jamais affichée en clair dans
@@ -189,6 +201,19 @@ resource "azurerm_key_vault_secret" "alert_webhook_url" {
 
   name         = "alert-webhook-url"
   value        = var.alert_webhook_url
+  key_vault_id = azurerm_key_vault.main.id
+
+  depends_on = [time_sleep.wait_for_rbac_propagation]
+}
+
+# ----------------------------------------------------------------------------
+# Secret : mot de passe administrateur du dashboard de monitoring, généré
+# dynamiquement. Consommé par la VM au démarrage pour protéger l'accès web
+# au dashboard derrière une page de connexion (voir user_data.sh).
+# ----------------------------------------------------------------------------
+resource "azurerm_key_vault_secret" "dashboard_admin_password" {
+  name         = "dashboard-admin-password"
+  value        = random_password.dashboard_admin_password.result
   key_vault_id = azurerm_key_vault.main.id
 
   depends_on = [time_sleep.wait_for_rbac_propagation]

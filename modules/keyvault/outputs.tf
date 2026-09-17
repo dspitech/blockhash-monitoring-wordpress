@@ -64,3 +64,8 @@ output "alert_webhook_url_secret_name" {
   description = "Nom du secret Key Vault contenant l'URL de webhook d'alerte (chaîne vide si non créé)."
   value       = length(azurerm_key_vault_secret.alert_webhook_url) > 0 ? azurerm_key_vault_secret.alert_webhook_url[0].name : ""
 }
+
+output "dashboard_admin_password_secret_name" {
+  description = "Nom du secret Key Vault contenant le mot de passe administrateur du dashboard."
+  value       = azurerm_key_vault_secret.dashboard_admin_password.name
+}

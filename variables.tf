@@ -123,6 +123,18 @@ variable "alert_email" {
 }
 
 # ----------------------------------------------------------------------------
+# Dashboard de monitoring — authentification
+# Le mot de passe est généré dynamiquement (module keyvault) et stocké dans
+# Key Vault, exactement comme le mot de passe MySQL et la clé SSH : aucune
+# saisie manuelle requise.
+# ----------------------------------------------------------------------------
+variable "dashboard_admin_username" {
+  description = "Nom d'utilisateur pour la connexion au dashboard de monitoring."
+  type        = string
+  default     = "admin"
+}
+
+# ----------------------------------------------------------------------------
 # Tags — appliqués uniformément à toutes les ressources pour la gouvernance
 # et le suivi des coûts (FinOps).
 # ----------------------------------------------------------------------------
