@@ -41,10 +41,10 @@ resource "azurerm_network_interface_security_group_association" "web" {
 # Rendu du template user_data.sh : injecte UNIQUEMENT des valeurs NON
 # sensibles (nom du Key Vault, noms des secrets à récupérer, nom de la base
 # MySQL locale, adresse email d'alerte). Aucune valeur secrète n'est
-# interpolée ici — user_data.sh les récupère lui-même à l'exécution via
+# interpolée ici - user_data.sh les récupère lui-même à l'exécution via
 # l'identité managée de la VM et l'API REST de Key Vault.
 #
-# NOTE (v2) : il n'y a plus de "mysql_fqdn" à transmettre — MySQL est
+# NOTE (v2) : il n'y a plus de "mysql_fqdn" à transmettre - MySQL est
 # installé et écoute localement sur la VM (127.0.0.1:3306).
 # ----------------------------------------------------------------------------
 locals {
@@ -66,7 +66,7 @@ locals {
   # Le dashboard entreprise (backend Node.js + frontend HTML/CSS/JS
   # abondamment commentés) fait grossir user_data.sh bien au-delà de cette
   # limite (~83 000 caractères en clair, ~110 000 une fois encodé en
-  # base64 — Azure refuse la création de la VM avec l'erreur
+  # base64 - Azure refuse la création de la VM avec l'erreur
   # "InvalidParameter: Custom data ... maximum length of 87380 characters").
   #
   # Solution : le script complet est compressé en gzip puis encodé en
@@ -158,7 +158,7 @@ resource "azurerm_linux_virtual_machine" "web" {
   }
 
   # Script de provisioning transmis via un bootstrap compressé (voir
-  # local.bootstrap_script ci-dessus) — contourne la limite Azure de
+  # local.bootstrap_script ci-dessus) - contourne la limite Azure de
   # 87 380 caractères sur "custom_data". Le script complet ne contient
   # AUCUN secret en clair (voir local.user_data_rendered).
   custom_data = base64encode(local.bootstrap_script)

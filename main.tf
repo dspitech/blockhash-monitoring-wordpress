@@ -1,5 +1,5 @@
 ##############################################################################
-# main.tf — Point d'entrée principal de l'infrastructure BlockHash sur Azure
+# main.tf - Point d'entrée principal de l'infrastructure BlockHash sur Azure
 #
 # Ce fichier orchestre 3 modules Terraform (network, keyvault, vm).
 #
@@ -15,10 +15,10 @@
 # de données n'est écrit en dur dans ce projet. Toutes les valeurs
 # sensibles sont :
 #   1. Générées dynamiquement par Terraform (random_password, tls_private_key)
-#      dans le module "keyvault" — jamais recopiées littéralement dans le code.
+#      dans le module "keyvault" - jamais recopiées littéralement dans le code.
 #   2. Stockées dans Azure Key Vault (module "keyvault"), protégé par RBAC.
 #   3. Récupérées par la VM à l'exécution via son identité managée système
-#      (Managed Identity) — le script cloud-init ne reçoit QUE le nom du
+#      (Managed Identity) - le script cloud-init ne reçoit QUE le nom du
 #      Key Vault et les NOMS des secrets, jamais leur valeur.
 ##############################################################################
 
@@ -52,7 +52,7 @@ provider "azurerm" {
     }
     # Permet à "terraform destroy" de purger définitivement le Key Vault
     # même si purge_protection_enabled est resté à "false" (cf. variable
-    # keyvault_purge_protection_enabled) — utile en environnement de test.
+    # keyvault_purge_protection_enabled) - utile en environnement de test.
     key_vault {
       purge_soft_delete_on_destroy    = true
       recover_soft_deleted_key_vaults = true
@@ -103,7 +103,7 @@ module "keyvault" {
 # à aller chercher au démarrage via l'identité managée de la VM.
 #
 # NOTE ARCHITECTURE (v2) : MySQL tourne désormais LOCALEMENT sur cette VM
-# (voir user_data.sh) — il n'y a donc plus de module "database" ni de
+# (voir user_data.sh) - il n'y a donc plus de module "database" ni de
 # serveur MySQL Flexible Server. Le nom de la base ("wordpress" par défaut)
 # est une simple variable non sensible ; le login/mot de passe MySQL restent
 # générés et stockés dans Key Vault exactement comme avant, mais servent
@@ -125,7 +125,7 @@ module "vm" {
   vm_size        = var.vm_size
   admin_username = var.vm_admin_username
 
-  # Clé publique générée par Terraform (module keyvault) — l'utilisateur
+  # Clé publique générée par Terraform (module keyvault) - l'utilisateur
   # n'a besoin de fournir aucune clé SSH lui-même.
   ssh_public_key = module.keyvault.ssh_public_key
 
@@ -140,7 +140,7 @@ module "vm" {
   dashboard_admin_password_secret_name = module.keyvault.dashboard_admin_password_secret_name
   dashboard_admin_username             = var.dashboard_admin_username
 
-  # Nom de la base MySQL locale — non sensible.
+  # Nom de la base MySQL locale - non sensible.
   mysql_database_name = var.mysql_database_name
 
   alert_email = var.alert_email

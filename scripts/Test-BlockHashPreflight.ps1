@@ -64,9 +64,9 @@ function Add-CheckResult {
     }
 
     switch ($Status) {
-        "OK"   { Write-Host "  [OK]   $Name — $Message" -ForegroundColor Green }
-        "WARN" { Write-Host "  [WARN] $Name — $Message" -ForegroundColor Yellow }
-        "FAIL" { Write-Host "  [FAIL] $Name — $Message" -ForegroundColor Red }
+        "OK"   { Write-Host "  [OK]   $Name - $Message" -ForegroundColor Green }
+        "WARN" { Write-Host "  [WARN] $Name - $Message" -ForegroundColor Yellow }
+        "FAIL" { Write-Host "  [FAIL] $Name - $Message" -ForegroundColor Red }
     }
 }
 
@@ -86,7 +86,7 @@ foreach ($mod in $requiredModules) {
     if (Get-Module -ListAvailable -Name $mod) {
         Add-CheckResult -Name "Module $mod" -Status "OK" -Message "Disponible."
     } else {
-        Add-CheckResult -Name "Module $mod" -Status "WARN" -Message "Non trouvé localement — Azure Cloud Shell le fournit normalement par défaut."
+        Add-CheckResult -Name "Module $mod" -Status "WARN" -Message "Non trouvé localement - Azure Cloud Shell le fournit normalement par défaut."
     }
 }
 
@@ -126,7 +126,7 @@ Write-Section "2. Fournisseurs de ressources Azure requis"
 
 # NOTE (v2) : "Microsoft.DBforMySQL" a été retiré de cette liste. MySQL
 # tourne désormais localement sur la VM Web (installation via cloud-init)
-# et non plus sur Azure Database for MySQL Flexible Server — ce fournisseur
+# et non plus sur Azure Database for MySQL Flexible Server - ce fournisseur
 # de ressources n'est donc plus nécessaire pour ce projet.
 $requiredProviders = @(
     "Microsoft.Compute",
@@ -188,14 +188,14 @@ foreach ($requiredKey in @("project_name", "environment", "location", "vm_size",
     if ($tfvars.ContainsKey($requiredKey) -and $tfvars[$requiredKey] -ne "") {
         Add-CheckResult -Name "Variable '$requiredKey'" -Status "OK" -Message "Renseignée : $($tfvars[$requiredKey])"
     } else {
-        Add-CheckResult -Name "Variable '$requiredKey'" -Status "WARN" -Message "Absente du tfvars — la valeur par défaut de variables.tf sera utilisée."
+        Add-CheckResult -Name "Variable '$requiredKey'" -Status "WARN" -Message "Absente du tfvars - la valeur par défaut de variables.tf sera utilisée."
     }
 }
 
 # Rappel : plus de clé SSH ni de mot de passe à valider ici, puisque ces
 # valeurs sont désormais générées automatiquement par Terraform et stockées
 # dans Azure Key Vault (voir modules/keyvault).
-Add-CheckResult -Name "Clé SSH VM" -Status "OK" -Message "Génération automatique par Terraform (tls_private_key) — aucune saisie requise."
+Add-CheckResult -Name "Clé SSH VM" -Status "OK" -Message "Génération automatique par Terraform (tls_private_key) - aucune saisie requise."
 Add-CheckResult -Name "Mot de passe MySQL" -Status "OK" -Message "Génération automatique par Terraform (random_password), stocké dans Key Vault."
 
 ##############################################################################
@@ -240,7 +240,7 @@ try {
                 if ($remaining -ge $vCpuNeeded) {
                     Add-CheckResult -Name "Quota vCPU ($($u.Name.LocalizedValue))" -Status "OK" -Message "$remaining vCPU restants sur $($u.Limit) (besoin : $vCpuNeeded)."
                 } else {
-                    Add-CheckResult -Name "Quota vCPU ($($u.Name.LocalizedValue))" -Status "FAIL" -Message "Seulement $remaining vCPU restants sur $($u.Limit) — insuffisant pour $vmSize (besoin : $vCpuNeeded). Demandez une augmentation de quota."
+                    Add-CheckResult -Name "Quota vCPU ($($u.Name.LocalizedValue))" -Status "FAIL" -Message "Seulement $remaining vCPU restants sur $($u.Limit) - insuffisant pour $vmSize (besoin : $vCpuNeeded). Demandez une augmentation de quota."
                 }
             }
         } else {
@@ -256,7 +256,7 @@ try {
 ##############################################################################
 Write-Section "6. Conventions de nommage des ressources"
 
-# NOTE (v2) : plus de vérification de nom pour un "serveur MySQL" Azure —
+# NOTE (v2) : plus de vérification de nom pour un "serveur MySQL" Azure -
 # MySQL est installé localement sur la VM (aucune ressource Azure nommée
 # séparément pour la base de données).
 $namesToCheck = @(
@@ -280,7 +280,7 @@ $kvPrefix = "kv-$projectName-$environment-"
 if (($kvPrefix.Length + 5) -le 24) {
     Add-CheckResult -Name "Préfixe Key Vault" -Status "OK" -Message "'$kvPrefix<suffixe>' tiendra dans la limite de 24 caractères d'Azure Key Vault."
 } else {
-    Add-CheckResult -Name "Préfixe Key Vault" -Status "FAIL" -Message "'$kvPrefix<suffixe>' dépassera la limite de 24 caractères — raccourcissez project_name ou environment."
+    Add-CheckResult -Name "Préfixe Key Vault" -Status "FAIL" -Message "'$kvPrefix<suffixe>' dépassera la limite de 24 caractères - raccourcissez project_name ou environment."
 }
 
 ##############################################################################
@@ -323,7 +323,7 @@ if (-not $terraformCmd) {
     if ($LASTEXITCODE -eq 0) {
         Add-CheckResult -Name "terraform init" -Status "OK" -Message "Initialisation réussie."
     } else {
-        Add-CheckResult -Name "terraform init" -Status "FAIL" -Message "Échec de l'initialisation — voir la sortie ci-dessus."
+        Add-CheckResult -Name "terraform init" -Status "FAIL" -Message "Échec de l'initialisation - voir la sortie ci-dessus."
     }
 
     Write-Host "  Exécution de 'terraform validate'..." -ForegroundColor Yellow
@@ -331,7 +331,7 @@ if (-not $terraformCmd) {
     if ($LASTEXITCODE -eq 0) {
         Add-CheckResult -Name "terraform validate" -Status "OK" -Message "Syntaxe et cohérence des modules valides."
     } else {
-        Add-CheckResult -Name "terraform validate" -Status "FAIL" -Message "Erreurs de validation détectées — voir la sortie ci-dessus."
+        Add-CheckResult -Name "terraform validate" -Status "FAIL" -Message "Erreurs de validation détectées - voir la sortie ci-dessus."
     }
 
     if (-not $SkipPlan -and $LASTEXITCODE -eq 0) {
@@ -340,7 +340,7 @@ if (-not $terraformCmd) {
         if ($LASTEXITCODE -eq 0) {
             Add-CheckResult -Name "terraform plan" -Status "OK" -Message "Plan généré avec succès (preflight.tfplan). Vous pouvez l'appliquer avec 'terraform apply preflight.tfplan'."
         } else {
-            Add-CheckResult -Name "terraform plan" -Status "FAIL" -Message "Échec de la génération du plan — voir la sortie ci-dessus (souvent lié aux quotas/permissions)."
+            Add-CheckResult -Name "terraform plan" -Status "FAIL" -Message "Échec de la génération du plan - voir la sortie ci-dessus (souvent lié aux quotas/permissions)."
         }
     }
 }
@@ -359,14 +359,14 @@ Write-Host "Résultats : $okCount OK / $warnCount avertissement(s) / $failCount 
 
 if ($failCount -gt 0) {
     Write-Host ""
-    Write-Host "❌ Des problèmes BLOQUANTS ont été détectés. Corrigez-les avant de lancer 'terraform apply'." -ForegroundColor Red
+    Write-Host "[ECHEC] Des problemes BLOQUANTS ont ete detectes. Corrigez-les avant de lancer 'terraform apply'." -ForegroundColor Red
     exit 1
 } elseif ($warnCount -gt 0) {
     Write-Host ""
-    Write-Host "⚠️  Le déploiement devrait fonctionner, mais vérifiez les avertissements ci-dessus." -ForegroundColor Yellow
+    Write-Host "[ATTENTION] Le deploiement devrait fonctionner, mais verifiez les avertissements ci-dessus." -ForegroundColor Yellow
     exit 0
 } else {
     Write-Host ""
-    Write-Host "✅ Toutes les vérifications sont passées. Vous pouvez lancer 'terraform apply' en toute confiance." -ForegroundColor Green
+    Write-Host "[OK] Toutes les verifications sont passees. Vous pouvez lancer 'terraform apply' en toute confiance." -ForegroundColor Green
     exit 0
 }

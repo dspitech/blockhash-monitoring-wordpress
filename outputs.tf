@@ -1,5 +1,5 @@
 ##############################################################################
-# outputs.tf — Sorties exposées au niveau racine après "terraform apply"
+# outputs.tf - Sorties exposees au niveau racine apres "terraform apply"
 ##############################################################################
 
 output "vm_public_ip_address" {
@@ -8,22 +8,17 @@ output "vm_public_ip_address" {
 }
 
 output "wordpress_url" {
-  description = "URL d'accès au site WordPress."
+  description = "URL d'acces au site WordPress."
   value       = "http://${module.network.public_ip_address}/"
 }
 
 output "dashboard_url" {
-  description = "URL d'accès au dashboard de monitoring temps réel (page de connexion)."
+  description = "URL d'acces au dashboard de monitoring temps reel (page de connexion)."
   value       = "http://${module.network.public_ip_address}/dashboard/login"
 }
 
-output "dashboard_admin_username" {
-  description = "Nom d'utilisateur pour se connecter au dashboard (mot de passe : voir Key Vault, secret 'dashboard-admin-password')."
-  value       = var.dashboard_admin_username
-}
-
 output "ssh_connection_command" {
-  description = "Commande SSH pour se connecter à la VM Web (nécessite la clé privée, voir vm_ssh_private_key)."
+  description = "Commande SSH pour se connecter a la VM Web (necessite la cle privee, voir vm_ssh_private_key)."
   value       = "ssh -i blockhash_vm_key.pem ${var.vm_admin_username}@${module.network.public_ip_address}"
 }
 
@@ -33,10 +28,9 @@ output "resource_group_name" {
 }
 
 # ----------------------------------------------------------------------------
-# Key Vault — aucune valeur secrète n'est exposée en clair ici (hormis la
-# clé privée SSH ci-dessous, indispensable pour la première connexion et
-# volontairement marquée "sensitive"). Le mot de passe MySQL et le webhook
-# d'alerte doivent être récupérés directement depuis Key Vault :
+# Key Vault - le mot de passe MySQL et le webhook d'alerte, eux, ne sont
+# jamais exposes en clair via un output : ils doivent etre recuperes
+# directement depuis Key Vault :
 #
 #   az keyvault secret show --vault-name <key_vault_name> \
 #       --name mysql-admin-password --query value -o tsv
@@ -52,19 +46,38 @@ output "key_vault_uri" {
 }
 
 # ----------------------------------------------------------------------------
-# Clé privée SSH générée automatiquement par Terraform — sensible. Pour la
-# récupérer et vous connecter à la VM :
+# Cle privee SSH generee automatiquement par Terraform - sensible. Pour la
+# recuperer et vous connecter a la VM :
 #
 #   terraform output -raw vm_ssh_private_key > blockhash_vm_key.pem
 #   chmod 600 blockhash_vm_key.pem
 #   ssh -i blockhash_vm_key.pem <user>@<ip>
 #
-# Cette clé est également stockée dans Key Vault (secret
-# "vm-ssh-private-key") pour une récupération ultérieure par toute personne
-# autorisée, sans avoir à ré-exécuter Terraform.
+# Cette cle est egalement stockee dans Key Vault (secret
+# "vm-ssh-private-key") pour une recuperation ulterieure par toute personne
+# autorisee, sans avoir a re-executer Terraform.
 # ----------------------------------------------------------------------------
 output "vm_ssh_private_key" {
-  description = "Clé privée SSH générée par Terraform pour se connecter à la VM (sensible)."
+  description = "Cle privee SSH generee par Terraform pour se connecter a la VM (sensible)."
   value       = module.keyvault.ssh_private_key
+  sensitive   = true
+}
+
+# ----------------------------------------------------------------------------
+# Identifiants de connexion au dashboard de monitoring - places en dernier
+# volontairement : ce sont les toutes dernieres informations affichees apres
+# "terraform apply", pratiques a copier immediatement pour se connecter a
+# l'interface web. Le mot de passe est marque "sensible" (non affiche par
+# defaut dans le recapitulatif de sortie de "terraform apply", uniquement
+# via "terraform output -raw dashboard_admin_password").
+# ----------------------------------------------------------------------------
+output "dashboard_admin_username" {
+  description = "Nom d'utilisateur pour se connecter au dashboard de monitoring."
+  value       = var.dashboard_admin_username
+}
+
+output "dashboard_admin_password" {
+  description = "Mot de passe du dashboard de monitoring, genere par Terraform (sensible). Recuperer avec : terraform output -raw dashboard_admin_password"
+  value       = module.keyvault.dashboard_admin_password
   sensitive   = true
 }

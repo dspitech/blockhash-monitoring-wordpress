@@ -1,9 +1,9 @@
 ##############################################################################
-# terraform.tfvars.example — Exemple de fichier de variables à personnaliser
+# terraform.tfvars.example - Exemple de fichier de variables à personnaliser
 #
 #   cp terraform.tfvars.example terraform.tfvars
 #
-# IMPORTANT — Gestion des secrets :
+# IMPORTANT - Gestion des secrets :
 #   - Il n'y a PAS de mot de passe MySQL à renseigner : il est généré
 #     automatiquement par Terraform et stocké dans Azure Key Vault.
 #   - Il n'y a PAS de clé SSH à fournir : Terraform en génère une pour vous
@@ -11,7 +11,7 @@
 #   - Le champ "alert_webhook_url" ci-dessous, s'il est renseigné, sera
 #     stocké dans Key Vault et ne sera jamais écrit en clair ailleurs.
 #
-# IMPORTANT — Architecture MySQL (v2) :
+# IMPORTANT - Architecture MySQL (v2) :
 #   - Azure Database for MySQL Flexible Server a été ABANDONNÉ (restriction
 #     "ProvisionNotSupportedForRegion" constatée sur les abonnements Azure
 #     for Students). MySQL Server 8.x tourne désormais LOCALEMENT sur la VM
@@ -44,7 +44,7 @@ vm_admin_username = "azureadmin"
 
 # --- Dashboard de monitoring : authentification -------------------------------
 # Le mot de passe est généré automatiquement par Terraform et stocké dans
-# Key Vault — aucune saisie manuelle requise.
+# Key Vault - aucune saisie manuelle requise.
 dashboard_admin_username = "admin"
 
 # --- Key Vault -----------------------------------------------------------------

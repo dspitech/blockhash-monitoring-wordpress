@@ -58,7 +58,7 @@ variable "ssh_public_key" {
 }
 
 # ----------------------------------------------------------------------------
-# Références Key Vault — UNIQUEMENT des noms/identifiants, jamais des
+# Références Key Vault - UNIQUEMENT des noms/identifiants, jamais des
 # valeurs secrètes. user_data.sh les utilise pour interroger Key Vault via
 # l'identité managée de la VM et récupérer les vraies valeurs à l'exécution.
 # ----------------------------------------------------------------------------
@@ -101,7 +101,7 @@ variable "dashboard_admin_username" {
 
 # ----------------------------------------------------------------------------
 # Valeur non sensible (nom de base) transmise directement.
-# NOTE (v2) : plus de "mysql_fqdn" — MySQL tourne localement sur la VM
+# NOTE (v2) : plus de "mysql_fqdn" - MySQL tourne localement sur la VM
 # (127.0.0.1:3306), voir user_data.sh.
 # ----------------------------------------------------------------------------
 variable "mysql_database_name" {

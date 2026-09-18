@@ -4,7 +4,7 @@
 # Ce module provisionne toute la fondation réseau de BlockHash :
 #   - Resource Group
 #   - Virtual Network (10.0.0.0/16)
-#   - Sous-réseau Web (10.0.1.0/24) — héberge la VM (Nginx/PHP/WordPress/
+#   - Sous-réseau Web (10.0.1.0/24) - héberge la VM (Nginx/PHP/WordPress/
 #     MySQL local/Dashboard Node.js)
 #   - Network Security Group (HTTP 80, SSH 22, WebSocket Dashboard 3000)
 #   - Adresse IP publique statique pour la VM Web
@@ -83,7 +83,7 @@ resource "azurerm_network_security_group" "web" {
   resource_group_name = azurerm_resource_group.main.name
   tags                = var.tags
 
-  # Règle SSH — administration distante de la VM.
+  # Règle SSH - administration distante de la VM.
   security_rule {
     name                       = "Allow-SSH"
     priority                   = 100
@@ -96,7 +96,7 @@ resource "azurerm_network_security_group" "web" {
     destination_address_prefix = "*"
   }
 
-  # Règle HTTP — accès public au site WordPress.
+  # Règle HTTP - accès public au site WordPress.
   security_rule {
     name                       = "Allow-HTTP"
     priority                   = 110
@@ -109,7 +109,7 @@ resource "azurerm_network_security_group" "web" {
     destination_address_prefix = "*"
   }
 
-  # Règle WebSocket Dashboard — flux temps réel Socket.io (port 3000).
+  # Règle WebSocket Dashboard - flux temps réel Socket.io (port 3000).
   security_rule {
     name                       = "Allow-Dashboard-WebSocket"
     priority                   = 120

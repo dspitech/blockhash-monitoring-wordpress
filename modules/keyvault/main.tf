@@ -14,7 +14,7 @@
 #     policies" historiques.
 #   - Seule l'identité managée système de la VM (rattachée après coup via
 #     un role assignment au niveau racine) pourra LIRE ces secrets au
-#     démarrage — jamais les scripts Terraform/cloud-init ne les
+#     démarrage - jamais les scripts Terraform/cloud-init ne les
 #     manipulent en clair au-delà de leur écriture initiale dans le Vault.
 #
 # NOTE IMPORTANTE : le state Terraform contient nécessairement ces valeurs
@@ -106,7 +106,7 @@ resource "tls_private_key" "vm_ssh" {
 }
 
 # ----------------------------------------------------------------------------
-# Azure Key Vault — coffre-fort central des secrets BlockHash.
+# Azure Key Vault - coffre-fort central des secrets BlockHash.
 # ----------------------------------------------------------------------------
 resource "azurerm_key_vault" "main" {
   name                = local.key_vault_name
@@ -179,7 +179,7 @@ resource "azurerm_key_vault_secret" "mysql_admin_password" {
 }
 
 # ----------------------------------------------------------------------------
-# Secret : clé privée SSH générée dynamiquement — permet à l'administrateur
+# Secret : clé privée SSH générée dynamiquement - permet à l'administrateur
 # de la récupérer a posteriori (ex: `az keyvault secret show`) même après
 # avoir perdu la copie initiale fournie par "terraform output".
 # ----------------------------------------------------------------------------

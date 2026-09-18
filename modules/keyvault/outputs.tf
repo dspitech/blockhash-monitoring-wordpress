@@ -18,7 +18,7 @@ output "key_vault_uri" {
 }
 
 # ----------------------------------------------------------------------------
-# Clé publique SSH générée — NON sensible, transmise telle quelle à
+# Clé publique SSH générée - NON sensible, transmise telle quelle à
 # azurerm_linux_virtual_machine.admin_ssh_key dans le module vm.
 # ----------------------------------------------------------------------------
 output "ssh_public_key" {
@@ -27,7 +27,7 @@ output "ssh_public_key" {
 }
 
 # ----------------------------------------------------------------------------
-# Clé privée SSH générée — sensible. Exposée en sortie de module pour être
+# Clé privée SSH générée - sensible. Exposée en sortie de module pour être
 # relayée par un output racine (pratique pour une récupération immédiate
 # sans avoir à interroger Key Vault), en plus d'être stockée dans Key Vault
 # pour une récupération ultérieure.
@@ -39,13 +39,13 @@ output "ssh_private_key" {
 }
 
 output "mysql_admin_password" {
-  description = "Mot de passe administrateur MySQL généré (sensible) — transmis au module database."
+  description = "Mot de passe administrateur MySQL genere (sensible)."
   value       = random_password.mysql_admin_password.result
   sensitive   = true
 }
 
 # ----------------------------------------------------------------------------
-# Noms des secrets Key Vault — non sensibles (ce sont des NOMS, pas des
+# Noms des secrets Key Vault - non sensibles (ce sont des NOMS, pas des
 # valeurs), transmis au module vm pour que user_data.sh sache QUOI
 # demander à Key Vault au démarrage, sans jamais recevoir les valeurs
 # elles-mêmes via Terraform/cloud-init.
@@ -68,4 +68,16 @@ output "alert_webhook_url_secret_name" {
 output "dashboard_admin_password_secret_name" {
   description = "Nom du secret Key Vault contenant le mot de passe administrateur du dashboard."
   value       = azurerm_key_vault_secret.dashboard_admin_password.name
+}
+
+# ----------------------------------------------------------------------------
+# Mot de passe du dashboard - sensible. Expose en sortie de module pour etre
+# relaye par un output racine (recuperation immediate via "terraform output",
+# sans avoir a interroger Key Vault), en plus d'etre stocke dans Key Vault
+# pour une recuperation ulterieure.
+# ----------------------------------------------------------------------------
+output "dashboard_admin_password" {
+  description = "Mot de passe administrateur du dashboard, genere par Terraform (sensible)."
+  value       = random_password.dashboard_admin_password.result
+  sensitive   = true
 }

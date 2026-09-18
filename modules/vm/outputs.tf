@@ -23,7 +23,7 @@ output "vm_private_ip_address" {
 }
 
 # ----------------------------------------------------------------------------
-# Principal ID de l'identité managée système de la VM — utilisé au niveau
+# Principal ID de l'identité managée système de la VM - utilisé au niveau
 # racine pour lui accorder le rôle "Key Vault Secrets User" sur le Key Vault
 # (azurerm_role_assignment.vm_keyvault_secrets_user dans main.tf).
 # ----------------------------------------------------------------------------

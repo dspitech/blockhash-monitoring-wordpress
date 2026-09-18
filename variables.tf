@@ -1,9 +1,9 @@
 ##############################################################################
-# variables.tf — Déclaration de toutes les variables d'entrée du projet racine
+# variables.tf - Déclaration de toutes les variables d'entrée du projet racine
 ##############################################################################
 
 # ----------------------------------------------------------------------------
-# Identité du projet — utilisé pour préfixer/nommer toutes les ressources
+# Identité du projet - utilisé pour préfixer/nommer toutes les ressources
 # de façon cohérente (convention de nommage Azure).
 # ----------------------------------------------------------------------------
 variable "project_name" {
@@ -19,7 +19,7 @@ variable "environment" {
 }
 
 # ----------------------------------------------------------------------------
-# Localisation Azure — région où seront déployées TOUTES les ressources.
+# Localisation Azure - région où seront déployées TOUTES les ressources.
 # Valeur demandée par BlockHash : Norway East.
 # ----------------------------------------------------------------------------
 variable "location" {
@@ -29,7 +29,7 @@ variable "location" {
 }
 
 # ----------------------------------------------------------------------------
-# Réseau — plages CIDR du VNet et des sous-réseaux.
+# Réseau - plages CIDR du VNet et des sous-réseaux.
 # ----------------------------------------------------------------------------
 variable "vnet_address_space" {
   description = "Plage d'adresses CIDR du Virtual Network principal."
@@ -44,7 +44,7 @@ variable "web_subnet_prefix" {
 }
 
 # ----------------------------------------------------------------------------
-# Base de données MySQL — INSTALLATION LOCALE SUR LA VM (v2)
+# Base de données MySQL - INSTALLATION LOCALE SUR LA VM (v2)
 #
 # Azure Database for MySQL Flexible Server a été abandonné : l'abonnement
 # Azure for Students utilisé pour ce projet renvoie l'erreur
@@ -123,7 +123,7 @@ variable "alert_email" {
 }
 
 # ----------------------------------------------------------------------------
-# Dashboard de monitoring — authentification
+# Dashboard de monitoring - authentification
 # Le mot de passe est généré dynamiquement (module keyvault) et stocké dans
 # Key Vault, exactement comme le mot de passe MySQL et la clé SSH : aucune
 # saisie manuelle requise.
@@ -135,7 +135,7 @@ variable "dashboard_admin_username" {
 }
 
 # ----------------------------------------------------------------------------
-# Tags — appliqués uniformément à toutes les ressources pour la gouvernance
+# Tags - appliqués uniformément à toutes les ressources pour la gouvernance
 # et le suivi des coûts (FinOps).
 # ----------------------------------------------------------------------------
 variable "tags" {

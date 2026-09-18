@@ -1,6 +1,6 @@
 #!/bin/bash
 ##############################################################################
-# user_data.sh — Script de provisioning cloud-init exécuté au premier
+# user_data.sh - Script de provisioning cloud-init exécuté au premier
 # démarrage de la VM Web BlockHash (Ubuntu 24.04 LTS).
 #
 # GESTION DES SECRETS : ce script ne contient AUCUN mot de passe, clé SSH ou
@@ -53,7 +53,7 @@
 #    4. Configuration Nginx (WordPress + proxy dashboard/API/WebSocket + logs enrichis)
 #    5. Déploiement et configuration de WordPress (connexion à MySQL local)
 #    6. Configuration de l'authentification du dashboard (Key Vault)
-#    7. Script de monitoring enrichi (monitor.sh) + script de test (test_5xx.sh)
+#    7. Script de monitoring enrichi (monitor.sh) + scripts de test (5xx, CPU, latence, MySQL)
 #    8. Planification Cron du monitoring (toutes les 5 minutes)
 #    9. Backend Node.js WebSockets + API + auth (dashboard/server.js) piloté par pm2
 #   10. Frontend Dashboard entreprise (dashboard/index.html + login.html)
@@ -73,7 +73,7 @@ echo ">>> [1/10] Mise à jour du système..."
 apt-get update -y
 apt-get upgrade -y
 
-echo ">>> [1/10] Installation de Nginx, PHP 8.3, MySQL Server, Node.js, NPM, Mailutils, Curl, jq..."
+echo ">>> [1/10] Installation de Nginx, PHP 8.3, MySQL Server, Node.js, NPM, Mailutils, Curl, jq, stress-ng..."
 apt-get install -y \
     nginx \
     mysql-server \
@@ -91,7 +91,8 @@ apt-get install -y \
     jq \
     unzip \
     bc \
-    python3
+    python3 \
+    stress-ng
 
 npm install -g pm2
 
@@ -189,7 +190,7 @@ done
 echo ">>> [3/10] Récupération des identifiants MySQL depuis Azure Key Vault..."
 
 # Récupérés UNE SEULE FOIS ici, puis réutilisés à l'étape 5 (wp-config.php)
-# via ces mêmes variables d'environnement exportées — évite un second aller-
+# via ces mêmes variables d'environnement exportées - évite un second aller-
 # retour vers Key Vault pour la même information.
 source /etc/blockhash/keyvault.env
 
@@ -278,7 +279,7 @@ server {
     # intégralement proxifié vers le backend Node.js, qui applique lui-même
     # l'authentification par session AVANT de servir le moindre fichier.
     # (v2 servait /dashboard en fichiers statiques via "alias", ce qui
-    # contournait totalement l'authentification applicative — corrigé ici.)
+    # contournait totalement l'authentification applicative - corrigé ici.)
     location /dashboard {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -356,8 +357,8 @@ PYEOF
 
 # Le nom de la base n'est PAS un secret (un nom de base seul ne permet
 # aucune connexion sans les identifiants ci-dessus) : il est injecté
-# directement par Terraform. DB_HOST reste "localhost" — valeur par défaut
-# de wp-config-sample.php — puisque MySQL tourne désormais SUR CETTE VM
+# directement par Terraform. DB_HOST reste "localhost" - valeur par défaut
+# de wp-config-sample.php - puisque MySQL tourne désormais SUR CETTE VM
 # (aucun remplacement de host nécessaire, contrairement à la v1 qui
 # pointait vers le FQDN d'un serveur MySQL Flexible Server distant).
 sed -i "s/database_name_here/${mysql_database_name}/" /var/www/html/wp-config.php
@@ -420,7 +421,7 @@ echo ">>> [7/10] Installation du script de monitoring /usr/local/bin/monitor.sh.
 cat > /usr/local/bin/monitor.sh << 'MONITOR_EOF'
 #!/bin/bash
 ##############################################################################
-# monitor.sh — Script de surveillance applicative & système pour BlockHash.
+# monitor.sh - Script de surveillance applicative & système pour BlockHash.
 #
 # Exécuté toutes les 5 minutes par cron (voir /etc/cron.d/blockhash-monitor).
 # Le webhook d'alerte n'est JAMAIS stocké en clair sur disque : il est
@@ -557,7 +558,7 @@ echo ">>> [7/10] Installation du script de test d'alerte /usr/local/bin/test_5xx
 cat > /usr/local/bin/test_5xx.sh << 'TEST_EOF'
 #!/bin/bash
 ##############################################################################
-# test_5xx.sh — Déclenche artificiellement des erreurs HTTP 500 afin de
+# test_5xx.sh - Déclenche artificiellement des erreurs HTTP 500 afin de
 # valider la chaîne d'alerte de monitor.sh (y compris la récupération du
 # webhook depuis Key Vault).
 ##############################################################################
@@ -589,6 +590,104 @@ TEST_EOF
 
 chmod +x /usr/local/bin/test_5xx.sh
 
+echo ">>> [7/10] Installation du script de test de charge CPU /usr/local/bin/test_cpu_stress.sh..."
+
+cat > /usr/local/bin/test_cpu_stress.sh << 'TEST_CPU_EOF'
+#!/bin/bash
+##############################################################################
+# test_cpu_stress.sh - Genere une charge CPU artificielle sur tous les
+# coeurs de la VM via stress-ng, afin de valider la sonde de charge CPU de
+# monitor.sh (seuil : 85 %) et l'affichage temps reel du dashboard.
+#
+# Usage : test_cpu_stress.sh [duree_en_secondes]  (defaut : 60)
+##############################################################################
+
+DURATION="$${1:-60}"
+
+echo "Demarrage d'une charge CPU sur $(nproc) coeur(s) pendant $${DURATION}s..."
+stress-ng --cpu "$(nproc)" --timeout "$${DURATION}s"
+
+echo "Charge CPU terminee."
+TEST_CPU_EOF
+
+chmod +x /usr/local/bin/test_cpu_stress.sh
+
+echo ">>> [7/10] Installation du script de test de latence /usr/local/bin/test_high_latency.sh..."
+
+cat > /usr/local/bin/test_high_latency.sh << 'TEST_LATENCY_EOF'
+#!/bin/bash
+##############################################################################
+# test_high_latency.sh - Simule une degradation du temps de reponse
+# applicatif (page PHP volontairement lente) afin de valider le calcul de
+# latence moyenne / p95 affiche dans les KPIs du dashboard.
+#
+# Usage : test_high_latency.sh [nombre_requetes] [duree_sleep_secondes]
+#         (defauts : 15 requetes, 3 secondes de pause par requete)
+##############################################################################
+
+TEST_FILE="/var/www/html/blockhash-test-latency.php"
+REQUEST_COUNT="$${1:-15}"
+SLEEP_SECONDS="$${2:-3}"
+
+echo "Creation de la page de test (pause de $${SLEEP_SECONDS}s par requete)..."
+cat > "$TEST_FILE" << 'PHP_EOF'
+<?php
+sleep(SLEEP_PLACEHOLDER);
+echo "Simulated slow response for BlockHash latency test.";
+PHP_EOF
+
+sed -i "s/SLEEP_PLACEHOLDER/$SLEEP_SECONDS/" "$TEST_FILE"
+chown www-data:www-data "$TEST_FILE"
+
+echo "Envoi de $REQUEST_COUNT requetes lentes vers $TEST_FILE ..."
+for i in $(seq 1 "$REQUEST_COUNT"); do
+    curl -s -o /dev/null "http://localhost/blockhash-test-latency.php"
+done
+
+echo "Nettoyage de la page de test..."
+rm -f "$TEST_FILE"
+
+echo "Test de latence termine."
+TEST_LATENCY_EOF
+
+chmod +x /usr/local/bin/test_high_latency.sh
+
+echo ">>> [7/10] Installation du script de test de coupure MySQL /usr/local/bin/test_mysql_down.sh..."
+
+cat > /usr/local/bin/test_mysql_down.sh << 'TEST_MYSQL_EOF'
+#!/bin/bash
+##############################################################################
+# test_mysql_down.sh - Interrompt temporairement le service MySQL local afin
+# de valider la sonde de disponibilite MySQL de monitor.sh et la chaine
+# d'alerte associee. Le service est redemarre automatiquement a la fin du
+# test. ATTENTION : WordPress est indisponible pendant la duree du test.
+#
+# Usage : test_mysql_down.sh [duree_en_secondes]  (defaut : 20)
+##############################################################################
+
+DURATION="$${1:-20}"
+
+echo "Arret temporaire de MySQL pendant $${DURATION}s..."
+systemctl stop mysql
+
+sleep "$DURATION"
+
+echo "Redemarrage de MySQL..."
+systemctl start mysql
+
+for i in $(seq 1 15); do
+    if mysqladmin ping --silent 2>/dev/null; then
+        echo "MySQL de nouveau disponible."
+        break
+    fi
+    sleep 2
+done
+
+echo "Test de coupure MySQL termine."
+TEST_MYSQL_EOF
+
+chmod +x /usr/local/bin/test_mysql_down.sh
+
 ##############################################################################
 # 8. PLANIFICATION CRON DU MONITORING (toutes les 5 minutes)
 ##############################################################################
@@ -604,7 +703,7 @@ touch /var/log/blockhash-incidents.log
 chmod 644 /var/log/blockhash-incidents.log
 
 ##############################################################################
-# 9. BACKEND NODE.JS — API, AUTHENTIFICATION, WEBSOCKETS (dashboard/server.js)
+# 9. BACKEND NODE.JS - API, AUTHENTIFICATION, WEBSOCKETS (dashboard/server.js)
 ##############################################################################
 echo ">>> [9/10] Déploiement du backend Node.js (dashboard/server.js)..."
 
@@ -627,7 +726,7 @@ PKG_EOF
 
 cat > /var/www/html/dashboard/server.js << 'SERVER_EOF'
 // ============================================================================
-// server.js — Backend du Dashboard entreprise BlockHash
+// server.js - Backend du Dashboard entreprise BlockHash
 //
 // Fonctionnalités :
 //   - Authentification par session (identifiants lus depuis un fichier local
@@ -791,7 +890,7 @@ function authRequired(req, res, next) {
 }
 
 // ----------------------------------------------------------------------------
-// Routes publiques (login) — enregistrees AVANT le middleware d'auth pour
+// Routes publiques (login) - enregistrees AVANT le middleware d'auth pour
 // rester accessibles sans session valide.
 // ----------------------------------------------------------------------------
 app.get("/dashboard/login", function (req, res) {
@@ -1118,7 +1217,7 @@ setInterval(function () {
 }, 3000);
 
 // ----------------------------------------------------------------------------
-// API REST — toutes protegees par authRequired (deja applique plus haut).
+// API REST - toutes protegees par authRequired (deja applique plus haut).
 // ----------------------------------------------------------------------------
 
 // Historique des metriques pour le graphique multi-plages.
@@ -1280,6 +1379,19 @@ io.use(function (socket, next) {
     next(new Error("unauthorized"));
 });
 
+// ----------------------------------------------------------------------------
+// Registre des scripts de test declenchables depuis le dashboard. Chaque
+// entree associe un identifiant (utilise cote client) au script shell
+// correspondant sur la VM, avec ses arguments par defaut. Voir
+// modules/vm/scripts/user_data.sh pour le contenu de chaque script.
+// ----------------------------------------------------------------------------
+var TEST_SCRIPTS = {
+    http_5xx: { path: "/usr/local/bin/test_5xx.sh", args: [] },
+    cpu_stress: { path: "/usr/local/bin/test_cpu_stress.sh", args: ["60"] },
+    high_latency: { path: "/usr/local/bin/test_high_latency.sh", args: ["15", "3"] },
+    mysql_down: { path: "/usr/local/bin/test_mysql_down.sh", args: ["20"] }
+};
+
 io.on("connection", function (socket) {
     console.log("Client dashboard connecte : " + socket.id);
 
@@ -1291,9 +1403,18 @@ io.on("connection", function (socket) {
         console.log("Client dashboard deconnecte : " + socket.id);
     });
 
-    socket.on("trigger_5xx_test", function () {
-        child_process.exec("/usr/local/bin/test_5xx.sh", function (err, stdout) {
-            io.emit("test_5xx_result", { success: !err, output: stdout || "" });
+    socket.on("trigger_test", function (payload) {
+        var testId = payload && payload.test;
+        var test = TEST_SCRIPTS[testId];
+
+        if (!test) {
+            socket.emit("test_result", { test: testId, success: false, output: "Test inconnu." });
+            return;
+        }
+
+        var command = test.path + " " + test.args.join(" ");
+        child_process.exec(command, { timeout: 180000 }, function (err, stdout) {
+            io.emit("test_result", { test: testId, success: !err, output: stdout || "" });
         });
     });
 });
@@ -1328,7 +1449,7 @@ cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BlockHash — Connexion</title>
+<title>BlockHash - Connexion</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 <style>
@@ -1407,7 +1528,7 @@ cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
                 return response.json().then(function (data) {
                     var messages = {
                         invalid_credentials: "Identifiants incorrects.",
-                        too_many_attempts: "Trop de tentatives — reessayez dans quelques minutes.",
+                        too_many_attempts: "Trop de tentatives - reessayez dans quelques minutes.",
                         auth_not_configured: "Authentification non configuree cote serveur."
                     };
                     errorEl.textContent = messages[data.error] || "Erreur de connexion.";
@@ -1415,7 +1536,7 @@ cat > /var/www/html/dashboard/login.html << 'LOGIN_EOF'
                 });
             })
             .catch(function () {
-                errorEl.textContent = "Erreur reseau — reessayez.";
+                errorEl.textContent = "Erreur reseau - reessayez.";
                 errorEl.classList.remove("hidden");
             });
     });
@@ -1430,7 +1551,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BlockHash — Dashboard de Monitoring</title>
+<title>BlockHash - Dashboard de Monitoring</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -1504,7 +1625,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
     <header class="flex flex-col md:flex-row md:items-center md:justify-between mb-8 gap-4">
         <div>
             <h1 class="text-3xl font-bold tracking-tight">BlockHash <span class="text-indigo-400">Ops</span></h1>
-            <p class="text-muted text-sm mt-1">Dashboard de monitoring — Infrastructure Azure</p>
+            <p class="text-muted text-sm mt-1">Dashboard de monitoring - Infrastructure Azure</p>
         </div>
         <div class="flex items-center gap-3">
             <span id="connection-indicator" class="status-dot bg-slate-500 text-slate-500"></span>
@@ -1615,15 +1736,61 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
         <div class="glass-card p-5 lg:col-span-2">
             <h2 class="font-semibold mb-3">Sante des services</h2>
             <div id="services-panel" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
-
-            <h2 class="font-semibold mt-5 mb-3">Actions</h2>
-            <button id="btn-test-5xx"
-                class="flex items-center justify-center gap-2 bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 rounded-lg py-2 px-4 text-sm">
-                <i data-lucide="zap" class="w-4 h-4"></i>
-                Lancer un test d'erreur 5xx
-            </button>
-            <p id="test-5xx-result" class="text-xs text-muted mt-2"></p>
         </div>
+    </section>
+
+    <!-- ==================== SCRIPTS DE TEST ==================== -->
+    <section class="glass-card p-5 mb-6">
+        <h2 class="font-semibold mb-1">Scripts de test</h2>
+        <p class="text-muted text-xs mb-4">Declenchent une situation degradee controlee (et auto-reversible) afin de valider la chaine de supervision complete : sonde monitor.sh, alerte, journal d'incidents.</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="glass-card p-4 flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="server-crash" class="w-4 h-4 text-rose-400"></i>
+                    <span class="text-sm font-medium">Erreurs HTTP 500</span>
+                </div>
+                <p class="text-xs text-muted flex-1">Envoie 30 requetes en erreur 500. Valide la sonde de taux d'erreurs 5xx (seuil 5%).</p>
+                <button class="test-btn bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 rounded-lg py-2 text-xs font-medium" data-test="http_5xx">
+                    Lancer le test
+                </button>
+            </div>
+
+            <div class="glass-card p-4 flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="cpu" class="w-4 h-4 text-amber-400"></i>
+                    <span class="text-sm font-medium">Charge CPU</span>
+                </div>
+                <p class="text-xs text-muted flex-1">Sature tous les coeurs pendant 60s. Valide la sonde de charge CPU (seuil 85%) et le graphique temps reel.</p>
+                <button class="test-btn bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/30 text-amber-300 rounded-lg py-2 text-xs font-medium" data-test="cpu_stress">
+                    Lancer le test
+                </button>
+            </div>
+
+            <div class="glass-card p-4 flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="timer" class="w-4 h-4 text-amber-400"></i>
+                    <span class="text-sm font-medium">Latence elevee</span>
+                </div>
+                <p class="text-xs text-muted flex-1">15 requetes volontairement lentes (3s). Valide le KPI de latence moyenne / p95.</p>
+                <button class="test-btn bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/30 text-amber-300 rounded-lg py-2 text-xs font-medium" data-test="high_latency">
+                    Lancer le test
+                </button>
+            </div>
+
+            <div class="glass-card p-4 flex flex-col gap-2">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="database-zap" class="w-4 h-4 text-rose-400"></i>
+                    <span class="text-sm font-medium">Coupure MySQL</span>
+                </div>
+                <p class="text-xs text-muted flex-1">Arrete MySQL local 20s puis le redemarre. Valide la sonde de disponibilite MySQL. WordPress indisponible pendant le test.</p>
+                <button class="test-btn bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-rose-300 rounded-lg py-2 text-xs font-medium" data-test="mysql_down">
+                    Lancer le test
+                </button>
+            </div>
+        </div>
+
+        <p id="test-result" class="text-xs text-muted mt-3"></p>
     </section>
 
     <!-- ==================== TOP ENDPOINTS / TOP IPs ==================== -->
@@ -1674,7 +1841,7 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
     lucide.createIcons();
 
     // ------------------------------------------------------------------
-    // Theme clair/sombre — persiste la preference dans localStorage
+    // Theme clair/sombre - persiste la preference dans localStorage
     // (page servee par notre propre backend, pas une preview d'artefact).
     // ------------------------------------------------------------------
     var themeBtn = document.getElementById("btn-theme-toggle");
@@ -1802,16 +1969,19 @@ cat > /var/www/html/dashboard/index.html << 'HTML_EOF'
         logTerminal.innerHTML = "";
     });
 
-    document.getElementById("btn-test-5xx").addEventListener("click", function () {
-        document.getElementById("test-5xx-result").textContent = "Test en cours...";
-        socket.emit("trigger_5xx_test");
+    document.querySelectorAll(".test-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            var testId = btn.getAttribute("data-test");
+            document.getElementById("test-result").textContent = "Test en cours (" + testId + ")...";
+            socket.emit("trigger_test", { test: testId });
+        });
     });
 
-    socket.on("test_5xx_result", function (result) {
-        var el = document.getElementById("test-5xx-result");
+    socket.on("test_result", function (result) {
+        var el = document.getElementById("test-result");
         el.textContent = result.success
-            ? "Test termine avec succes : verifiez le journal d'incidents ci-dessus."
-            : "Le test a rencontre une erreur.";
+            ? "Test '" + result.test + "' termine avec succes - verifiez le journal d'incidents et les KPIs ci-dessus."
+            : "Le test '" + result.test + "' a rencontre une erreur.";
     });
 
     // ------------------------------------------------------------------
