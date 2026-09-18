@@ -282,6 +282,9 @@ cp terraform.tfvars.example terraform.tfvars
 ./scripts/Test-BlockHashPreflight.ps1
 ```
 
+<img width="1757" height="727" alt="image" src="https://github.com/user-attachments/assets/cd43b91d-9392-447b-8320-8886d8c154b9" />
+
+
 Ce script verifie avant tout deploiement : session Azure, fournisseurs de ressources, quotas vCPU/IP, disponibilite regionale de la taille de VM, conventions de nommage, et execute `terraform init/validate/plan`.
 
 ### 3. Deploiement
@@ -289,6 +292,7 @@ Ce script verifie avant tout deploiement : session Azure, fournisseurs de ressou
 ```bash
 terraform apply -auto-approve
 ```
+<img width="1301" height="697" alt="image" src="https://github.com/user-attachments/assets/9357a555-e88b-47f7-af9d-c3ed15e1c821" />
 
 ### 4. Acces aux services
 
@@ -311,6 +315,19 @@ ssh -i blockhash_vm_key.pem azureadmin@$(terraform output -raw vm_public_ip_addr
 terraform output -raw dashboard_admin_username
 terraform output -raw dashboard_admin_password
 ```
+
+<img width="1917" height="862" alt="image" src="https://github.com/user-attachments/assets/ab26bb35-78d2-4565-811c-de45443f3ee6" />
+
+<img width="1901" height="871" alt="image" src="https://github.com/user-attachments/assets/98e59d77-c0dc-471e-9646-5f23c2318605" />
+
+<img width="1857" height="606" alt="image" src="https://github.com/user-attachments/assets/957a7cf9-347c-48b9-a0c9-2b80d6c7cd7f" />
+
+<img width="1866" height="657" alt="image" src="https://github.com/user-attachments/assets/1678957a-fc95-4f31-9276-5fa962083488" />
+
+<img width="1897" height="857" alt="image" src="https://github.com/user-attachments/assets/0f76993c-7927-46a3-a46b-87385b054923" />
+
+<img width="1867" height="591" alt="image" src="https://github.com/user-attachments/assets/31bd486d-b439-411f-9777-825d76c8f286" />
+
 
 Ces deux valeurs sont affichees en dernier dans la sortie de `terraform apply` (dernier bloc d'outputs), pretes a etre copiees pour la premiere connexion.
 
