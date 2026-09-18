@@ -324,7 +324,8 @@ terraform output -raw dashboard_admin_password
 
 <img width="1866" height="657" alt="image" src="https://github.com/user-attachments/assets/1678957a-fc95-4f31-9276-5fa962083488" />
 
-<img width="1897" height="857" alt="image" src="https://github.com/user-attachments/assets/0f76993c-7927-46a3-a46b-87385b054923" />
+<img width="1902" height="865" alt="image" src="https://github.com/user-attachments/assets/f57de8e1-7d2b-432b-aa8d-298f706ad217" />
+
 
 <img width="1867" height="591" alt="image" src="https://github.com/user-attachments/assets/31bd486d-b439-411f-9777-825d76c8f286" />
 
