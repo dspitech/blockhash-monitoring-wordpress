@@ -31,6 +31,12 @@ location = "norwayeast"
 vnet_address_space = ["10.0.0.0/16"]
 web_subnet_prefix  = ["10.0.1.0/24"]
 
+# --- Sécurité SSH (ETAPE 1) ----------------------------------------------------
+# Restreignez SSH à votre IP publique plutôt que de laisser "*" (ouvert au
+# monde entier). Trouvez la vôtre avec : curl -4 ifconfig.me
+# Exemple : ssh_allowed_source_ip = "90.12.34.56/32"
+ssh_allowed_source_ip = "*"
+
 # --- Base de données MySQL (installation locale sur la VM) -------------------
 # Le login est stocké dans Key Vault (secret "mysql-admin-login") ; il n'est
 # pas secret en lui-même (c'est un nom d'utilisateur), mais centralisé pour
@@ -64,3 +70,9 @@ tags = {
   environment = "prod"
   managed_by  = "terraform"
 }
+
+# --- Observabilité (ETAPE 8) - gratuit jusqu'à 5 Go/mois ingérés --------------
+enable_log_analytics = true
+
+# --- Gouvernance (ETAPE 7) - gratuit, aucune ressource facturée --------------
+enable_tag_policy = true

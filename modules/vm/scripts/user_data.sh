@@ -84,6 +84,8 @@ apt-get install -y \
     php8.3-mbstring \
     php8.3-zip \
     php8.3-gd \
+    php8.3-redis \
+    redis-server \
     nodejs \
     npm \
     mailutils \
@@ -95,6 +97,107 @@ apt-get install -y \
     stress-ng
 
 npm install -g pm2
+
+##############################################################################
+# 1B. DURCISSEMENT SYSTEME (gratuit) : SSH, mises à jour auto, fail2ban
+#
+# Ajouté lors du renforcement sécurité/réseau/admin sys du projet. Trois
+# actions, toutes gratuites (paquets open-source déjà dans les dépôts
+# Ubuntu, aucune ressource Azure supplémentaire) :
+#   1. Durcissement de la configuration SSH (sshd_config).
+#   2. unattended-upgrades : applique automatiquement les correctifs de
+#      sécurité Ubuntu, sans intervention manuelle.
+#   3. fail2ban : bannit temporairement (pare-feu local, iptables) toute IP
+#      qui échoue trop de fois à se connecter en SSH ou au dashboard.
+##############################################################################
+echo ">>> [1B] Durcissement SSH, mises à jour automatiques, fail2ban..."
+
+apt-get install -y fail2ban unattended-upgrades
+
+# --- 1. Durcissement SSH -----------------------------------------------
+# L'authentification par mot de passe est déjà désactivée côté Azure
+# (disable_password_authentication = true dans modules/vm/main.tf), mais on
+# le répète explicitement ici au niveau du démon SSH lui-même (défense en
+# profondeur, utile aussi si la VM est un jour reconfigurée hors Terraform).
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/99-blockhash-hardening.conf << 'SSHD_EOF'
+# Durcissement SSH BlockHash - voir README, section Sécurité.
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+X11Forwarding no
+AllowTcpForwarding no
+MaxAuthTries 3
+ClientAliveInterval 300
+ClientAliveCountMax 2
+SSHD_EOF
+
+systemctl reload sshd || systemctl reload ssh || true
+
+# --- 2. Mises à jour de sécurité automatiques ---------------------------
+# Applique quotidiennement (via systemd timer intégré au paquet) les seuls
+# correctifs de SÉCURITÉ Ubuntu, sans redémarrage automatique de la VM
+# (Unattended-Upgrade::Automatic-Reboot "false" - un redémarrage silencieux
+# et non planifié sur une VM de prod serait pire que le risque évité).
+cat > /etc/apt/apt.conf.d/51blockhash-unattended-upgrades << 'UU_EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+UU_EOF
+
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'AU_EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+AU_EOF
+
+systemctl enable unattended-upgrades
+systemctl restart unattended-upgrades
+
+# --- 3. fail2ban (SSH + dashboard) ---------------------------------------
+# Jail SSH : configuration par défaut de fail2ban (jail sshd), suffisante
+# ici puisque l'authentification par mot de passe est déjà désactivée -
+# fail2ban protège malgré tout contre le bruit/la charge des scanners.
+cat > /etc/fail2ban/jail.d/blockhash-sshd.conf << 'F2B_SSH_EOF'
+[sshd]
+enabled  = true
+port     = 22
+maxretry = 4
+findtime = 600
+bantime  = 3600
+F2B_SSH_EOF
+
+# Jail dashboard BlockHash : le backend Node.js (voir étape 6/9 plus bas)
+# journalise chaque échec de connexion dans /var/log/blockhash-auth.log
+# au format "BLOCKHASH_AUTH_FAIL <ip>", que fail2ban surveille ici. Vient
+# en complément (niveau réseau/iptables) de l'anti brute-force déjà présent
+# au niveau applicatif (5 tentatives/5 min/IP, express-session).
+mkdir -p /var/log
+touch /var/log/blockhash-auth.log
+chmod 640 /var/log/blockhash-auth.log
+
+cat > /etc/fail2ban/filter.d/blockhash-dashboard.conf << 'F2B_FILTER_EOF'
+[Definition]
+failregex = ^BLOCKHASH_AUTH_FAIL <HOST>$
+ignoreregex =
+F2B_FILTER_EOF
+
+cat > /etc/fail2ban/jail.d/blockhash-dashboard.conf << 'F2B_DASH_EOF'
+[blockhash-dashboard]
+enabled  = true
+filter   = blockhash-dashboard
+logpath  = /var/log/blockhash-auth.log
+maxretry = 5
+findtime = 300
+bantime  = 3600
+action   = iptables-allports[name=blockhash-dashboard]
+F2B_DASH_EOF
+
+systemctl enable fail2ban
+systemctl restart fail2ban
+
+echo ">>> [1B] Durcissement système terminé (SSH, unattended-upgrades, fail2ban)."
 
 ##############################################################################
 # 2. ACCES AZURE KEY VAULT VIA L'IDENTITE MANAGEE DE LA VM
@@ -380,10 +483,64 @@ rm -f /tmp/wp-salts.txt
 unset MYSQL_ADMIN_LOGIN
 unset MYSQL_ADMIN_PASSWORD
 
+# ----------------------------------------------------------------------------
+# ETAPE 9 (performance, gratuit) : cache objet Redis local.
+# Réduit la charge MySQL/PHP en mettant en cache les requêtes répétées de
+# WordPress (options, requêtes de menu, etc.). redis-server + php8.3-redis
+# sont installés à l'étape 1 ; Redis écoute par défaut uniquement sur
+# 127.0.0.1 sous Ubuntu (aucune exposition réseau), on le confirme
+# explicitement ci-dessous par défense en profondeur.
+sed -i 's/^bind .*/bind 127.0.0.1 -::1/' /etc/redis/redis.conf
+systemctl enable redis-server
+systemctl restart redis-server
+
+# Drop-in officiel WordPress/Redis (object-cache.php) : active le cache
+# objet sans dépendre d'un plugin tiers à mettre à jour séparément.
+curl -sSL -o /var/www/html/wp-content/object-cache.php \
+    https://raw.githubusercontent.com/rhubarbgroup/redis-cache/develop/includes/object-cache.php || \
+    echo ">>> [5/10] AVERTISSEMENT : téléchargement du drop-in Redis échoué, cache objet désactivé (non bloquant)."
+
+python3 - << 'PYEOF'
+path = "/var/www/html/wp-config.php"
+with open(path, "r") as f:
+    content = f.read()
+
+# ETAPE 9 : active le cache objet Redis (utilisé par le drop-in ci-dessus).
+# ETAPE 10 (gratuit) : mises à jour automatiques WordPress - le coeur ET
+# les extensions/thèmes se mettent à jour seuls (correctifs de sécurité
+# WordPress publiés régulièrement), sans intervention manuelle sur la VM.
+auto_update_defines = (
+    "define( 'WP_REDIS_HOST', '127.0.0.1' );\n"
+    "define( 'WP_REDIS_PORT', 6379 );\n"
+    "define( 'WP_CACHE', true );\n"
+    "define( 'WP_AUTO_UPDATE_CORE', true );\n"
+    "define( 'AUTOMATIC_UPDATER_DISABLED', false );\n"
+)
+marker = "/* That's all, stop editing"
+content = content.replace(marker, auto_update_defines + marker)
+
+with open(path, "w") as f:
+    f.write(content)
+PYEOF
+
 mkdir -p /var/www/html/dashboard
 chown -R www-data:www-data /var/www/html
 find /var/www/html -type d -exec chmod 755 {} \;
 find /var/www/html -type f -exec chmod 644 {} \;
+
+# Active l'auto-update des plugins/thèmes existants (le coeur est déjà géré
+# par les defines ci-dessus) via WP-CLI - plus fiable que de patcher les
+# fichiers core à la main, et idempotent en cas de ré-exécution.
+if ! command -v wp >/dev/null 2>&1; then
+    curl -sSL -o /usr/local/bin/wp https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar && \
+        chmod +x /usr/local/bin/wp || \
+        echo ">>> [5/10] AVERTISSEMENT : installation de WP-CLI échouée (non bloquant, auto-update plugins/thèmes ignoré)."
+fi
+
+if command -v wp >/dev/null 2>&1; then
+    sudo -u www-data wp plugin auto-updates enable --all --path=/var/www/html || true
+    sudo -u www-data wp theme auto-updates enable --all --path=/var/www/html || true
+fi
 
 
 ##############################################################################
@@ -827,10 +984,16 @@ function safeCompare(a, b) {
 }
 
 // Limitation basique des tentatives de connexion (anti brute-force) : 5
-// echecs maximum par IP, blocage de 5 minutes.
+// echecs maximum par IP, blocage de 5 minutes. En complement (defense en
+// profondeur, niveau reseau), chaque echec est aussi journalise dans
+// /var/log/blockhash-auth.log au format que surveille fail2ban (jail
+// "blockhash-dashboard", voir user_data.sh etape 1B) : au-dela de 5 echecs
+// en 5 minutes, l'IP est carrement bannie par iptables, pas seulement
+// bloquee au niveau applicatif.
 var loginAttempts = {};
 var MAX_LOGIN_ATTEMPTS = 5;
 var LOGIN_LOCKOUT_MS = 5 * 60 * 1000;
+var AUTH_LOG_PATH = "/var/log/blockhash-auth.log";
 
 function isLockedOut(ip) {
     var entry = loginAttempts[ip];
@@ -852,6 +1015,15 @@ function registerFailedAttempt(ip) {
     }
     loginAttempts[ip].count += 1;
     loginAttempts[ip].lastAttempt = Date.now();
+
+    // Journalisation pour fail2ban - ne doit jamais faire planter le login
+    // (best-effort : une erreur d'ecriture disque ne doit pas bloquer
+    // l'utilisateur legitime a cote).
+    fs.appendFile(AUTH_LOG_PATH, "BLOCKHASH_AUTH_FAIL " + ip + "\n", function (err) {
+        if (err) {
+            console.error("Impossible d'ecrire dans " + AUTH_LOG_PATH + " :", err.message);
+        }
+    });
 }
 
 function clearAttempts(ip) {
@@ -1422,8 +1594,16 @@ io.on("connection", function (socket) {
 startLogStream();
 startIncidentStream();
 
-server.listen(PORT, function () {
-    console.log("Serveur dashboard BlockHash demarre sur le port " + PORT);
+// ETAPE 1 (sécurité réseau) : liaison EXPLICITE à 127.0.0.1 uniquement.
+// Sans cette précision, Node.js écoute par défaut sur 0.0.0.0 (toutes les
+// interfaces), ce qui rendait le dashboard joignable EN DIRECT sur le port
+// 3000 depuis Internet, en contournant totalement Nginx. La règle NSG qui
+// ouvrait ce port a été retirée (modules/network/main.tf) ; ce changement
+// applicatif est la seconde moitié de la correction (défense en profondeur :
+// même si une règle réseau était ré-ouverte par erreur, le process
+// n'écouterait toujours que localement).
+server.listen(PORT, "127.0.0.1", function () {
+    console.log("Serveur dashboard BlockHash demarre sur 127.0.0.1:" + PORT);
 });
 SERVER_EOF
 

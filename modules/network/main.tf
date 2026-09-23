@@ -71,11 +71,23 @@ resource "azurerm_public_ip" "web" {
 # ----------------------------------------------------------------------------
 # Network Security Group (NSG) : pare-feu applicatif au niveau du sous-réseau
 # Web. Autorise uniquement les flux entrants strictement nécessaires :
-#   - 22   (SSH)                : administration de la VM
-#   - 80   (HTTP)                : trafic WordPress/Nginx
-#   - 3000 (WebSocket Dashboard) : flux temps réel du dashboard de monitoring
+#   - 22 (SSH)  : administration de la VM, restreint a ssh_allowed_source_ip
+#   - 80 (HTTP) : trafic WordPress/Nginx ET dashboard (proxifie par Nginx)
 # Tout le reste du trafic entrant est implicitement refusé (règle Azure
 # "DenyAllInBound" par défaut, priorité 65500).
+#
+# ETAPE 1 (durcissement réseau, gratuit) :
+#   - SSH n'est plus ouvert a "*" mais a var.ssh_allowed_source_ip.
+#   - Le port 3000 (Node.js) n'est PLUS ouvert au niveau du NSG : le
+#     dashboard est déjà entièrement proxifié par Nginx sur le port 80
+#     (voir modules/vm/scripts/user_data.sh, bloc "location /dashboard").
+#     Garder 3000 ouvert au niveau réseau permettait de contacter le
+#     process Node.js EN DIRECT, en contournant Nginx (mais pas
+#     l'authentification applicative elle-même, qui reste dans le process
+#     Node.js). En parallèle, le serveur Node.js est désormais explicitement
+#     lié à 127.0.0.1 (voir user_data.sh) : même sans cette règle NSG, il
+#     n'écoutait plus que localement. Défense en profondeur : les deux
+#     corrections sont appliquées ensemble.
 # ----------------------------------------------------------------------------
 resource "azurerm_network_security_group" "web" {
   name                = "nsg-web"
@@ -83,7 +95,9 @@ resource "azurerm_network_security_group" "web" {
   resource_group_name = azurerm_resource_group.main.name
   tags                = var.tags
 
-  # Règle SSH - administration distante de la VM.
+  # Règle SSH - administration distante de la VM, restreinte à la/aux IP
+  # autorisée(s) (var.ssh_allowed_source_ip). Laisser "*" (défaut) revient à
+  # l'ancien comportement ouvert à Internet - à éviter en usage réel.
   security_rule {
     name                       = "Allow-SSH"
     priority                   = 100
@@ -92,11 +106,12 @@ resource "azurerm_network_security_group" "web" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"
-    source_address_prefix      = "*"
+    source_address_prefix      = var.ssh_allowed_source_ip
     destination_address_prefix = "*"
   }
 
-  # Règle HTTP - accès public au site WordPress.
+  # Règle HTTP - accès public au site WordPress ET au dashboard (proxifiés
+  # tous les deux par Nginx sur ce même port 80).
   security_rule {
     name                       = "Allow-HTTP"
     priority                   = 110
@@ -105,19 +120,6 @@ resource "azurerm_network_security_group" "web" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "80"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
-
-  # Règle WebSocket Dashboard - flux temps réel Socket.io (port 3000).
-  security_rule {
-    name                       = "Allow-Dashboard-WebSocket"
-    priority                   = 120
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "3000"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }

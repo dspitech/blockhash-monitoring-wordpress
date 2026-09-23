@@ -43,6 +43,33 @@ terraform {
       version = "~> 0.11"
     }
   }
+
+  # --------------------------------------------------------------------------
+  # ETAPE 5 (gouvernance/sécurité, coût quasi nul) : backend distant.
+  #
+  # Par défaut, Terraform garde son "state" (qui CONTIENT les secrets, cf.
+  # README "Sécurité") en local (terraform.tfstate) : un poste perdu ou un
+  # commit malheureux = fuite de secrets + perte de l'historique
+  # d'infrastructure. Un backend "azurerm" (Blob Storage) corrige les deux.
+  #
+  # Coût : un Storage Account "Standard_LRS" avec un fichier de quelques Ko
+  # coûte quelques centimes/mois - couvert par le crédit gratuit Azure for
+  # Students, ou par le quota de stockage gratuit du free tier Azure (5 Go
+  # Blob Storage offerts pendant 12 mois sur un nouveau compte).
+  #
+  # PROBLEME DE L'OEUF ET DE LA POULE : ce Storage Account ne peut pas être
+  # créé PAR ce même Terraform (il faudrait déjà un backend pour le stocker).
+  # Créez-le une seule fois avec le script scripts/bootstrap-backend.sh
+  # (Azure CLI), puis décommentez le bloc ci-dessous avec les valeurs
+  # affichées par ce script, et lancez "terraform init" pour migrer le state
+  # local vers ce backend.
+  # --------------------------------------------------------------------------
+  # backend "azurerm" {
+  #   resource_group_name  = "rg-blockhash-tfstate"
+  #   storage_account_name = "stblockhashtfstate"   # doit être globalement unique
+  #   container_name       = "tfstate"
+  #   key                  = "blockhash.prod.tfstate"
+  # }
 }
 
 provider "azurerm" {
@@ -66,12 +93,13 @@ provider "azurerm" {
 module "network" {
   source = "./modules/network"
 
-  project_name       = var.project_name
-  environment        = var.environment
-  location           = var.location
-  vnet_address_space = var.vnet_address_space
-  web_subnet_prefix  = var.web_subnet_prefix
-  tags               = var.tags
+  project_name          = var.project_name
+  environment           = var.environment
+  location              = var.location
+  vnet_address_space    = var.vnet_address_space
+  web_subnet_prefix     = var.web_subnet_prefix
+  ssh_allowed_source_ip = var.ssh_allowed_source_ip
+  tags                  = var.tags
 }
 
 # ----------------------------------------------------------------------------
@@ -83,15 +111,15 @@ module "network" {
 module "keyvault" {
   source = "./modules/keyvault"
 
-  project_name              = var.project_name
-  environment               = var.environment
-  location                  = var.location
-  resource_group_name       = module.network.resource_group_name
-  mysql_admin_login         = var.mysql_admin_login
-  alert_webhook_url         = var.alert_webhook_url
-  dashboard_admin_username  = var.dashboard_admin_username
-  purge_protection_enabled  = var.keyvault_purge_protection_enabled
-  tags                      = var.tags
+  project_name             = var.project_name
+  environment              = var.environment
+  location                 = var.location
+  resource_group_name      = module.network.resource_group_name
+  mysql_admin_login        = var.mysql_admin_login
+  alert_webhook_url        = var.alert_webhook_url
+  dashboard_admin_username = var.dashboard_admin_username
+  purge_protection_enabled = var.keyvault_purge_protection_enabled
+  tags                     = var.tags
 
   depends_on = [module.network]
 }
@@ -162,4 +190,129 @@ resource "azurerm_role_assignment" "vm_keyvault_secrets_user" {
   scope                = module.keyvault.key_vault_id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = module.vm.principal_id
+}
+
+##############################################################################
+# ETAPE 8 - OBSERVABILITE : Log Analytics Workspace + agent Azure Monitor
+#
+# Objectif : survivre à la panne qu'on est censé détecter. Le monitoring
+# actuel (monitor.sh, dashboard Node.js) tourne SUR la VM qu'il surveille :
+# si la VM plante ou perd le réseau, plus aucune alerte ne part. En
+# centralisant syslog/auth.log/logs Nginx dans un Log Analytics Workspace
+# externe, on garde un historique consultable même si la VM est down.
+#
+# GRATUIT : la tarification "PerGB2018" facture au volume ingéré, MAIS
+# chaque abonnement Azure bénéficie d'un quota de 5 Go/mois ingérés
+# GRATUITS, à vie (pas seulement pendant les 12 mois du free tier étudiant).
+# Pour un usage interne à faible volume (une seule VM), on reste largement
+# sous ce seuil. Passez enable_log_analytics = false pour désactiver
+# entièrement ce bloc si vous préférez ne prendre aucun risque de dépassement.
+##############################################################################
+resource "azurerm_log_analytics_workspace" "main" {
+  count = var.enable_log_analytics ? 1 : 0
+
+  name                = "log-${var.project_name}-${var.environment}"
+  location            = var.location
+  resource_group_name = module.network.resource_group_name
+  sku                 = "PerGB2018"
+
+  # Retention minimale (30 jours) = incluse gratuitement, au-delà la
+  # rétention supplémentaire est facturée. On reste donc au minimum.
+  retention_in_days = 30
+
+  tags = var.tags
+}
+
+# Agent Azure Monitor (AMA), successeur gratuit du vieil agent "OMS/MMA",
+# installé comme extension VM. Il remonte syslog/metrics vers le workspace
+# ci-dessus. L'installation de l'extension elle-même est gratuite ; seul le
+# volume de données ingérées est (éventuellement) facturé au-delà de 5 Go/mois.
+resource "azurerm_virtual_machine_extension" "ama" {
+  count = var.enable_log_analytics ? 1 : 0
+
+  name                       = "AzureMonitorLinuxAgent"
+  virtual_machine_id         = module.vm.vm_id
+  publisher                  = "Microsoft.Azure.Monitor"
+  type                       = "AzureMonitorLinuxAgent"
+  type_handler_version       = "1.29"
+  auto_upgrade_minor_version = true
+  tags                       = var.tags
+
+  depends_on = [azurerm_log_analytics_workspace.main]
+}
+
+# Règle de collecte de données (DCR) minimale : syslog (auth, daemon, cron)
+# et compteurs de performance de base (CPU/RAM/disque), suffisant pour un
+# usage interne sans faire gonfler le volume ingéré.
+resource "azurerm_monitor_data_collection_rule" "main" {
+  count = var.enable_log_analytics ? 1 : 0
+
+  name                = "dcr-${var.project_name}-${var.environment}"
+  location            = var.location
+  resource_group_name = module.network.resource_group_name
+  tags                = var.tags
+
+  destinations {
+    log_analytics {
+      workspace_resource_id = azurerm_log_analytics_workspace.main[0].id
+      name                  = "log-analytics-destination"
+    }
+  }
+
+  data_flow {
+    streams      = ["Microsoft-Syslog"]
+    destinations = ["log-analytics-destination"]
+  }
+
+  data_sources {
+    syslog {
+      name           = "syslog-source"
+      facility_names = ["auth", "authpriv", "cron", "daemon", "syslog"]
+      log_levels     = ["Warning", "Error", "Critical", "Alert", "Emergency"]
+    }
+  }
+}
+
+resource "azurerm_monitor_data_collection_rule_association" "main" {
+  count = var.enable_log_analytics ? 1 : 0
+
+  name                    = "dcra-${var.project_name}-${var.environment}"
+  target_resource_id      = module.vm.vm_id
+  data_collection_rule_id = azurerm_monitor_data_collection_rule.main[0].id
+
+  depends_on = [azurerm_virtual_machine_extension.ama]
+}
+
+##############################################################################
+# ETAPE 7 - GOUVERNANCE : Azure Policy (gratuit, aucune ressource facturée)
+#
+# Impose que toute nouvelle ressource créée dans ce Resource Group porte le
+# tag "environment" - évite la dérive progressive ("on verra plus tard pour
+# les tags") qui rend le FinOps et l'audit impossibles à l'échelle.
+##############################################################################
+resource "azurerm_policy_definition" "require_environment_tag" {
+  count = var.enable_tag_policy ? 1 : 0
+
+  name         = "require-environment-tag-${var.project_name}"
+  policy_type  = "Custom"
+  mode         = "Indexed"
+  display_name = "Exiger le tag 'environment' sur les ressources BlockHash"
+
+  policy_rule = jsonencode({
+    if = {
+      field  = "tags['environment']"
+      exists = "false"
+    }
+    then = {
+      effect = "deny"
+    }
+  })
+}
+
+resource "azurerm_resource_group_policy_assignment" "require_environment_tag" {
+  count = var.enable_tag_policy ? 1 : 0
+
+  name                 = "require-environment-tag"
+  resource_group_id    = module.network.resource_group_id
+  policy_definition_id = azurerm_policy_definition.require_environment_tag[0].id
 }

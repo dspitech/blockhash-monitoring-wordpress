@@ -1,0 +1,81 @@
+##############################################################################
+# .github/workflows/terraform-ci.yml
+#
+# ETAPE 6 - CI/CD gratuit (GitHub Actions).
+#
+# Objectif : attraper les erreurs Terraform (syntaxe, mauvaises pratiques,
+# failles de sécurité évidentes) AVANT le "terraform apply", sur chaque
+# Pull Request. Ne fait volontairement AUCUN "terraform apply" (pas de
+# credentials Azure stockés dans le repo) : uniquement de la validation
+# statique.
+#
+# Coût : 100% gratuit.
+#   - Dépôt public : minutes GitHub Actions illimitées.
+#   - Dépôt privé  : 2000 minutes/mois gratuites (compte gratuit GitHub),
+#     largement suffisant pour ce pipeline (quelques dizaines de secondes
+#     par run).
+#   - tflint et checkov sont des outils open-source gratuits.
+##############################################################################
+name: Terraform CI
+
+on:
+  pull_request:
+    paths:
+      - "**/*.tf"
+      - "**/*.tfvars"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.tf"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Format, validate, lint & security scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du dépôt
+        uses: actions/checkout@v4
+
+      - name: Installation de Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      # Vérifie que le code est correctement formaté (terraform fmt).
+      - name: terraform fmt (vérification)
+        run: terraform fmt -check -recursive
+
+      # Vérifie la validité syntaxique/sémantique de la configuration.
+      # (init en mode "backend=false" : pas besoin de credentials Azure pour
+      # une simple validation statique.)
+      - name: terraform init (sans backend)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      # tflint : détecte les mauvaises pratiques Terraform/Azure (variables
+      # non utilisées, types incohérents, arguments obsolètes du provider
+      # azurerm, etc.) que "terraform validate" seul ne voit pas.
+      - name: Installation de tflint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive
+
+      # checkov : scanner de sécurité "Infrastructure as Code" gratuit et
+      # open-source - repère par exemple un NSG trop permissif, un Storage
+      # Account public, un disque non chiffré, etc. Configuré en mode
+      # "soft fail" (n'échoue pas le pipeline) pour ce projet pédagogique :
+      # retirez "soft_fail: true" pour bloquer les PR en cas de finding.
+      - name: checkov (scan de sécurité IaC)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: true

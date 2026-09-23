@@ -44,6 +44,18 @@ variable "web_subnet_prefix" {
 }
 
 # ----------------------------------------------------------------------------
+# ETAPE 1 (durcissement réseau, gratuit) : IP source autorisée pour le SSH.
+# A renseigner dans terraform.tfvars avec votre IP publique en /32
+# (ex. "90.12.34.56/32"). Trouvez la vôtre avec : curl -4 ifconfig.me
+# Laisser "*" revient à ouvrir SSH au monde entier - déconseillé.
+# ----------------------------------------------------------------------------
+variable "ssh_allowed_source_ip" {
+  description = "IP (ou plage CIDR) autorisée en SSH sur la VM. Exemple : \"90.12.34.56/32\"."
+  type        = string
+  default     = "*"
+}
+
+# ----------------------------------------------------------------------------
 # Base de données MySQL - INSTALLATION LOCALE SUR LA VM (v2)
 #
 # Azure Database for MySQL Flexible Server a été abandonné : l'abonnement
@@ -146,4 +158,28 @@ variable "tags" {
     environment = "prod"
     managed_by  = "terraform"
   }
+}
+
+# ----------------------------------------------------------------------------
+# ETAPE 8 (observabilité, gratuit dans la limite de 5 Go ingérés/mois) :
+# Active un Azure Log Analytics Workspace + l'agent Azure Monitor sur la VM,
+# pour centraliser syslog/auth.log/nginx en dehors de la VM elle-même (donc
+# consultable même si la VM est down). Peut être désactivé (false) pour
+# rester au plus proche de zéro ressource si le quota gratuit inquiète.
+# ----------------------------------------------------------------------------
+variable "enable_log_analytics" {
+  description = "Active le Log Analytics Workspace + l'agent Azure Monitor sur la VM (gratuit jusqu'à 5 Go/mois ingérés)."
+  type        = bool
+  default     = true
+}
+
+# ----------------------------------------------------------------------------
+# ETAPE 7 (gouvernance, gratuit) : impose le tag "environment" sur toutes
+# les ressources du Resource Group via une Azure Policy native (aucun coût,
+# aucune ressource facturée - Azure Policy est gratuit).
+# ----------------------------------------------------------------------------
+variable "enable_tag_policy" {
+  description = "Active une Azure Policy imposant le tag 'environment' sur les ressources du Resource Group (gratuit)."
+  type        = bool
+  default     = true
 }
