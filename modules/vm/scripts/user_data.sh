@@ -141,7 +141,7 @@ systemctl reload sshd || systemctl reload ssh || true
 # et non planifié sur une VM de prod serait pire que le risque évité).
 cat > /etc/apt/apt.conf.d/51blockhash-unattended-upgrades << 'UU_EOF'
 Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
+    "$${distro_id}:$${distro_codename}-security";
 };
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 Unattended-Upgrade::Automatic-Reboot "false";
